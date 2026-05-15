@@ -1,21 +1,21 @@
 #include <harp_synchronizer.h>
+#include <hal/uart_periph.h>
 
 HarpSynchronizer::HarpSynchronizer(uart_port_t uart_id, uint8_t uart_rx_pin)
-:uart_id_{uart_id}, packet_index_{0}, sync_data_{0, 0, 0, 0},
- state_{RECEIVE_HEADER_0}, new_timestamp_{false}, offset_us_64_{0},
- has_synced_{false}, intr_handle_{nullptr}
+:intr_handle_{nullptr}, uart_id_{uart_id}, state_{RECEIVE_HEADER_0},
+ packet_index_{0}, new_timestamp_{false}, offset_us_64_{0},
+ has_synced_{false}, sync_data_{0, 0, 0, 0}
 {
     if (self == nullptr)
         self = this;
     // Configure UART for Harp sync input.
-    uart_config_t cfg = {
-        .baud_rate  = HARP_SYNC_BAUDRATE,
-        .data_bits  = UART_DATA_8_BITS,
-        .parity     = UART_PARITY_DISABLE,
-        .stop_bits  = UART_STOP_BITS_1,
-        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
-    };
+    uart_config_t cfg = {};
+    cfg.baud_rate  = HARP_SYNC_BAUDRATE;
+    cfg.data_bits  = UART_DATA_8_BITS;
+    cfg.parity     = UART_PARITY_DISABLE;
+    cfg.stop_bits  = UART_STOP_BITS_1;
+    cfg.flow_ctrl  = UART_HW_FLOWCTRL_DISABLE;
+    cfg.source_clk = UART_SCLK_DEFAULT;
     uart_param_config(uart_id_, &cfg);
     // Map RX pin; TX/RTS/CTS not used.
     uart_set_pin(uart_id_, UART_PIN_NO_CHANGE, (int)uart_rx_pin,
@@ -92,8 +92,12 @@ void HarpSynchronizer::uart_rx_callback()
                     next_state_ = RECEIVE_HEADER_0;
                 break;
             case RECEIVE_TIMESTAMP:
-                self->sync_data_[self->packet_index_++] = new_byte;
-                if (self->packet_index_ == 4)
+            {
+                uint8_t packet_index = self->packet_index_;
+                self->sync_data_[packet_index] = new_byte;
+                packet_index++;
+                self->packet_index_ = packet_index;
+                if (packet_index == 4)
                 {
                     next_state_ = RECEIVE_HEADER_0;
                     self->packet_index_ = 0;
@@ -102,6 +106,7 @@ void HarpSynchronizer::uart_rx_callback()
                 else
                     next_state_ = RECEIVE_TIMESTAMP;
                 break;
+            }
         }
         self->state_ = next_state_;
     }

@@ -225,16 +225,17 @@ private:
             + self->heartbeat_interval_us_;
     }
 
-    const uint8_t& total_bytes_read_;
+    Registers regs_;
     uint8_t rx_buffer_[MAX_PACKET_SIZE];
     uint8_t rx_buffer_index_;
+    const uint8_t& total_bytes_read_;
     uint64_t offset_us_64_;
-    uint32_t next_heartbeat_time_us_;
-    uint32_t heartbeat_interval_us_;
-    uint32_t disconnect_start_time_us_;
     bool disconnect_handled_;
     bool connect_handled_;
     bool sync_handled_;
+    uint32_t heartbeat_interval_us_;
+    uint32_t next_heartbeat_time_us_;
+    uint32_t disconnect_start_time_us_;
 
     void process_cdc_input();
     static void update_state(bool force = false,
@@ -253,8 +254,6 @@ private:
     static void write_serial_number(msg_t& msg);
     static void write_clock_config(msg_t& msg);
     static void write_timestamp_offset(msg_t& msg);
-
-    Registers regs_;
 
     RegFnPair reg_func_table_[CORE_REG_COUNT] =
     {

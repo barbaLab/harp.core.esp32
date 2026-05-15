@@ -15,9 +15,16 @@ Registers::Registers(uint16_t who_am_i,
        .R_HARP_VERSION_L = harp_version_minor,
        .R_FW_VERSION_H = fw_version_major,
        .R_FW_VERSION_L = fw_version_minor,
+       .R_TIMESTAMP_SECOND = 0,
+       .R_TIMESTAMP_MICRO = 0,
        .R_OPERATION_CTRL = 0,
+       .R_RESET_DEF = 0,
+       .R_DEVICE_NAME = {0},
        .R_SERIAL_NUMBER = serial_number,
-       .R_UUID = {0} // all zeros.
+       .R_CLOCK_CONFIG = 0,
+       .R_TIMESTAMP_OFFSET = 0,
+       .R_UUID = {0},
+       .R_TAG = {0}
         }
 {
     strcpy((char*)regs_.R_DEVICE_NAME, name);
