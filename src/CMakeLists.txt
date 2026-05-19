@@ -10,14 +10,17 @@ idf_component_register(
         harp_synchronizer.cpp
         harp_c_app.cpp
         main.cpp
+        status_led.cpp
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../inc
+        # ${CMAKE_CURRENT_SOURCE_DIR}/../lib
     REQUIRES
         driver        # uart_driver_install, uart_param_config, etc.
         esp_timer     # esp_timer_get_time()
         esp_system    # esp_restart(), esp_efuse_mac_get_default()
         tinyusb       # TinyUSB stack (espressif/esp_tinyusb managed component)
-)
+        led_strip     # Adafruit NeoPixel library (espressif/led_strip managed component)
+        )
 
 # # ESP-IDF adds -Wno-old-style-declaration (C-only) to all compile units including
 # # C++, and -fuse-cxa-atexit (C++-only) to all units including C. With -Werror these
