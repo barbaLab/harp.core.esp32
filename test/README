@@ -1,11 +1,81 @@
+Python test scripts for validating Harp behavior on the ESP32-S3 firmware.
 
-This directory is intended for PlatformIO Test Runner and project tests.
+These scripts are host-side integration checks. They are not PlatformIO unit
+tests.
 
-Unit Testing is a software testing method by which individual units of
-source code, sets of one or more MCU program modules together with associated
-control data, usage procedures, and operating procedures, are tested to
-determine whether they are fit for use. Unit testing finds problems early
-in the development cycle.
+## Prerequisites
 
-More information about PlatformIO Unit Testing:
-- https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+- Firmware flashed and running on the target board.
+- Python environment with the `harp` package installed.
+    ```bash
+    pip install harp-protocol harp-serial
+    ```
+- Correct COM port selection for the Harp CDC interface.
+
+In the current setup:
+
+- Harp data is on `COM5`.
+- Firmware logs are on a separate console port (for example `COM6`).
+
+Only point Python scripts to the Harp data port.
+
+## API Notes
+
+The scripts in this folder use the current `harp` package API:
+
+- `from harp.serial.device import Device`
+- `from harp.protocol import CommonRegisters, OperationMode`
+
+Heartbeat control uses `device.alive_en(True/False)`.
+
+## Scripts
+
+- `get_info.py`
+	- Connects to the device and prints common register information.
+
+- `set_mode.py`
+	- Switches operation mode between `ACTIVE` and `STANDBY` and prints results.
+
+- `enable_heartbeat.py`
+	- Sets mode to `ACTIVE`, enables heartbeat, and prints incoming event messages.
+
+- `get_timestamp.py`
+	- Repeatedly reads `OPERATION_CTRL` and prints message timestamps.
+
+- `update_local_time.py`
+	- Reads `TIMESTAMP_SECOND`, writes a new value, and reads back to verify.
+
+- `reboot_to_usb_device.py`
+	- Writes reset bits to `RESET_DEV`.
+	- This script intentionally triggers a device reset.
+
+- `test_reply_speed.py`
+	- Measures round-trip timing over many read requests.
+	- Prints summary stats and shows a histogram.
+	- Uses a built-in console progress indicator (no extra progress-bar library required).
+
+## Running a Script
+
+From the project root:
+
+```bash
+python test/get_info.py
+```
+
+Run heartbeat check:
+
+```bash
+python test/enable_heartbeat.py
+```
+
+Run timing test:
+
+```bash
+python test/test_reply_speed.py
+```
+
+## Notes
+
+- Many scripts currently default to `COM5` on Windows.
+- On Linux they use `/dev/ttyACM0` by default.
+- `ibl.bin` is used as the dump file argument when opening `Device`.
