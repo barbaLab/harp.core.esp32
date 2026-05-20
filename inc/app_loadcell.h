@@ -40,6 +40,7 @@ struct LcConfigPayload {
     float    exit_threshold_g;         // force to declare exit   [g]
     uint16_t debounce_frames;          // consecutive frames before commit
     uint8_t  stream_enable;            // 1 = emit R_LC_DATA events, 0 = silent
+    float    filter_alpha;             // IIR coefficient: 1.0 = no filter, < 1.0 = smoothing
 };
 #pragma pack(pop)
 

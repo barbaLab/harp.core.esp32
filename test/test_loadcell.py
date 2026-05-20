@@ -15,8 +15,8 @@ REG_LC_EVENT = 37
 REG_LC_CONFIG = 38
 
 # Payload layouts from inc/app_loadcell.h (packed)
-# LcConfigPayload: float entry, float exit, uint16 debounce, uint8 stream
-LC_CONFIG_FMT = "<ffHB"
+# LcConfigPayload: float entry, float exit, uint16 debounce, uint8 stream, float filter_alpha
+LC_CONFIG_FMT = "<ffHBf"
 # LcDataPayload: float force[4], float total, float cop_x, float cop_y
 LC_DATA_FMT = "<7f"
 
@@ -131,6 +131,7 @@ def write_lc_config(
 	exit_threshold_g: float,
 	debounce_frames: int,
 	stream_enable: bool,
+	filter_alpha: float = 1.0,
 ) -> None:
 	payload = struct.pack(
 		LC_CONFIG_FMT,
@@ -138,11 +139,12 @@ def write_lc_config(
 		float(exit_threshold_g),
 		int(debounce_frames),
 		1 if stream_enable else 0,
+		max(0.0, min(1.0, float(filter_alpha))),
 	)
 	device.write_u8(REG_LC_CONFIG, list(payload))
 
 
-def read_lc_config(device: Device) -> tuple[float, float, int, int]:
+def read_lc_config(device: Device) -> tuple[float, float, int, int, float]:
 	reply = device.read_u8(REG_LC_CONFIG)
 	payload = _to_payload_bytes(reply)
 	expected = struct.calcsize(LC_CONFIG_FMT)
@@ -187,6 +189,7 @@ def main() -> None:
 	parser.add_argument("--entry", type=float, default=20.0, help="Entry threshold in grams")
 	parser.add_argument("--exit", dest="exit_", type=float, default=10.0, help="Exit threshold in grams")
 	parser.add_argument("--debounce", type=int, default=8, help="Debounce frame count")
+	parser.add_argument("--filter-alpha", type=float, default=1.0, help="IIR filter coefficient (1.0=off, <1.0=smooth)")
 	parser.add_argument("--stream", action="store_true", help="Enable LC_DATA event streaming")
 	parser.add_argument("--plot-duration", type=float, default=30.0, help="Duration in seconds for --mode plot-com")
 	parser.add_argument(
@@ -211,7 +214,8 @@ def main() -> None:
 		stream_enabled = args.stream or (args.mode == "plot-com")
 		print(
 			f"    entry={args.entry:.3f} g, exit={args.exit_:.3f} g, "
-			f"debounce={args.debounce}, stream={int(stream_enabled)}"
+			f"debounce={args.debounce}, stream={int(stream_enabled)}, "
+			f"filter_alpha={args.filter_alpha:.3f}"
 		)
 		write_lc_config(
 			device,
@@ -219,14 +223,16 @@ def main() -> None:
 			exit_threshold_g=args.exit_,
 			debounce_frames=args.debounce,
 			stream_enable=stream_enabled,
+			filter_alpha=args.filter_alpha,
 		)
 
 		print("[2] Reading back LC_CONFIG")
-		entry, exit_, debounce, stream_enable = read_lc_config(device)
+		entry, exit_, debounce, stream_enable, filter_alpha_rb = read_lc_config(device)
 		print(
 			"    readback: "
 			f"entry={entry:.3f} g, exit={exit_:.3f} g, "
-			f"debounce={debounce}, stream={stream_enable}"
+			f"debounce={debounce}, stream={stream_enable}, "
+			f"filter_alpha={filter_alpha_rb:.3f}"
 		)
 
 		if args.include_lc_event:

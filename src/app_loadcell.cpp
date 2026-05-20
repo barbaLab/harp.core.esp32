@@ -10,13 +10,13 @@ namespace {
     constexpr float    kDefaultExitThreshold  = 10.f;   // g
     constexpr uint16_t kDefaultDebounceFrames = 8;      // ~100 ms at 80 Hz
     constexpr uint8_t  kDefaultStreamEnable   = 0;      // off by default
+    constexpr float    kDefaultFilterAlpha    = 1.f;    // no filtering by default
 
     bb::LoadCellArray* g_lc = nullptr;
 
     // Occupancy state machine
     bool     g_occupied      = false;
     uint16_t g_stable_count  = 0;
-    bool     g_pending_state = false;
 }
 
 // ── Register storage ──────────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ RegValues values {
         .exit_threshold_g  = kDefaultExitThreshold,
         .debounce_frames   = kDefaultDebounceFrames,
         .stream_enable     = kDefaultStreamEnable,
+        .filter_alpha      = kDefaultFilterAlpha,
     },
 };
 
@@ -53,9 +54,12 @@ void reset() {
     values.R_LC_CONFIG.exit_threshold_g  = kDefaultExitThreshold;
     values.R_LC_CONFIG.debounce_frames   = kDefaultDebounceFrames;
     values.R_LC_CONFIG.stream_enable     = kDefaultStreamEnable;
+    values.R_LC_CONFIG.filter_alpha      = kDefaultFilterAlpha;
     values.R_LC_EVENT.occupied           = 0;
     g_occupied     = false;
     g_stable_count = 0;
+    if (g_lc != nullptr)
+        g_lc->setFilterAlpha(kDefaultFilterAlpha);
 }
 
 void update() {
@@ -108,6 +112,9 @@ void write_lc_config(msg_t& msg) {
     // Clamp: exit threshold must be < entry threshold
     if (values.R_LC_CONFIG.exit_threshold_g >= values.R_LC_CONFIG.entry_threshold_g)
         values.R_LC_CONFIG.exit_threshold_g = values.R_LC_CONFIG.entry_threshold_g * 0.5f;
+    // Apply filter alpha to the driver immediately
+    if (g_lc != nullptr)
+        g_lc->setFilterAlpha(values.R_LC_CONFIG.filter_alpha);
     HarpCore::send_harp_reply(WRITE, msg.header.address);
 }
 
