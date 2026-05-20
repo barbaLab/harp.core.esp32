@@ -10,7 +10,8 @@ idf_component_register(
         harp_synchronizer.cpp
         harp_c_app.cpp
         main.cpp
-        status_led.cpp
+        bb_statusLED.cpp
+        app_statusLED.cpp
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../inc
         # ${CMAKE_CURRENT_SOURCE_DIR}/../lib

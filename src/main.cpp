@@ -7,7 +7,10 @@
 #include <harp_core.h>
 #include <harp_synchronizer.h>
 
-#include "status_led.h"
+#include "app_statusLED.h"
+#include "app_loadcell.h"
+#include "bb_statusLED.h"
+#include "bb_loadcell.h"
 
 namespace {
 
