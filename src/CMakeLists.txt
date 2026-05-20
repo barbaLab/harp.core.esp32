@@ -12,6 +12,8 @@ idf_component_register(
         main.cpp
         bb_statusLED.cpp
         app_statusLED.cpp
+        bb_loadcell.cpp
+        app_loadcell.cpp
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../inc
         # ${CMAKE_CURRENT_SOURCE_DIR}/../lib

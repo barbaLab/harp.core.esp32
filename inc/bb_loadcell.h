@@ -85,9 +85,9 @@ struct LoadCellConfig {
 
     // Platform geometry (used for CoP calculation) ---------------------------
     /// X position of each cell on the platform [mm], positive = right
-    float pos_x_mm[LoadCellCount] = {-60.f,  60.f, -60.f,  60.f};
+    float pos_x_mm[LoadCellCount] = { -160.f,  160.f,  160.f,  -160.f};
     /// Y position of each cell on the platform [mm], positive = front
-    float pos_y_mm[LoadCellCount] = { 40.f,  40.f, -40.f, -40.f};
+    float pos_y_mm[LoadCellCount] = {  160.f,  160.f, -160.f, -160.f};
 
     // Signal processing ------------------------------------------------------
     float occupancy_threshold_g = 5.f;  ///< Minimum total force to declare platform occupied

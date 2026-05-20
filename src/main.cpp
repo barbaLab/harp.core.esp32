@@ -2,6 +2,7 @@
 #include <freertos/task.h>
 
 #include <esp_log.h>
+#include <cstring>
 
 #include <harp_c_app.h>
 #include <harp_core.h>
@@ -41,6 +42,46 @@ constexpr uint32_t kAppTaskStackWords = 4096;
 constexpr UBaseType_t kAppTaskPriority = 5;
 constexpr BaseType_t kAppTaskCore = 1;
 
+// ── Combined register map ──────────────────────────────────────────────────
+constexpr size_t kTotalRegCount =
+    StatusLedAppRegs::REGISTER_COUNT +
+    LoadCellAppRegs::REGISTER_COUNT;
+
+RegSpecs  g_app_specs[kTotalRegCount];
+RegFnPair g_app_fns[kTotalRegCount];
+
+bb::LoadCellArray g_loadcells;
+bb::LoadCellConfig g_loadcell_cfg{};
+
+void combined_update()
+{
+    StatusLedAppRegs::update();
+    LoadCellAppRegs::update();
+}
+
+void combined_reset()
+{
+    StatusLedAppRegs::reset();
+    LoadCellAppRegs::reset();
+}
+
+void build_register_map()
+{
+    std::memcpy(g_app_specs,
+                StatusLedAppRegs::specs,
+                StatusLedAppRegs::REGISTER_COUNT * sizeof(RegSpecs));
+    std::memcpy(g_app_specs + StatusLedAppRegs::REGISTER_COUNT,
+                LoadCellAppRegs::specs,
+                LoadCellAppRegs::REGISTER_COUNT * sizeof(RegSpecs));
+
+    std::memcpy(g_app_fns,
+                StatusLedAppRegs::functions,
+                StatusLedAppRegs::REGISTER_COUNT * sizeof(RegFnPair));
+    std::memcpy(g_app_fns + StatusLedAppRegs::REGISTER_COUNT,
+                LoadCellAppRegs::functions,
+                LoadCellAppRegs::REGISTER_COUNT * sizeof(RegFnPair));
+}
+
 void app_state_machine_step()
 {
     // Placeholder for the future behavior-box state machine.
@@ -73,27 +114,33 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(kMainLogTag, "app_main start");
 
+    // ── Hardware init ──────────────────────────────────────────────────────
     StatusLed::init();
+    ESP_ERROR_CHECK(g_loadcells.init(g_loadcell_cfg));
+
+    // ── App-layer init ─────────────────────────────────────────────────────
+    LoadCellAppRegs::init(g_loadcells);
     StatusLedAppRegs::reset();
+    LoadCellAppRegs::reset();
+
+    // ── Flat register map ──────────────────────────────────────────────────
+    build_register_map();
 
     HarpCApp::init(
         kWhoAmI,
-        kHwVersionMajor,
-        kHwVersionMinor,
+        kHwVersionMajor, kHwVersionMinor,
         kAssemblyVersion,
-        HARP_VERSION_MAJOR,
-        HARP_VERSION_MINOR,
-        kFwVersionMajor,
-        kFwVersionMinor,
+        HARP_VERSION_MAJOR, HARP_VERSION_MINOR,
+        kFwVersionMajor, kFwVersionMinor,
         kSerialNumber,
         kDeviceName,
         kTag,
-        &StatusLedAppRegs::values,
-        StatusLedAppRegs::specs,
-        StatusLedAppRegs::functions,
-        StatusLedAppRegs::REGISTER_COUNT,
-        StatusLedAppRegs::update,
-        StatusLedAppRegs::reset);
+        nullptr, // app register values are accessed via the RegSpecs base_ptrs
+        g_app_specs,
+        g_app_fns,
+        kTotalRegCount,
+        combined_update,
+        combined_reset);
 
     ESP_LOGI(kMainLogTag, "HarpCApp initialized");
 
@@ -104,6 +151,9 @@ extern "C" void app_main(void)
         ESP_LOGI(kMainLogTag, "UART synchronizer enabled on uart=%d rx_pin=%u",
                  static_cast<int>(kSyncUartPort), static_cast<unsigned>(kSyncUartRxPin));
     }
+
+    ESP_ERROR_CHECK(g_loadcells.tare(32, pdMS_TO_TICKS(5)));
+    ESP_ERROR_CHECK(g_loadcells.start());
 
     ESP_LOGI(kMainLogTag, "Entering Harp main loop");
 

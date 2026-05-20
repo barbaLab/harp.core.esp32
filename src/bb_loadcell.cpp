@@ -281,7 +281,7 @@ void IRAM_ATTR LoadCellArray::doutIsr(void* arg)
     }
     BaseType_t hp_woken = pdFALSE;
     vTaskNotifyGiveFromISR(self->task_handle_, &hp_woken);
-    portYIELD_FROM_ISR_IF(hp_woken);
+    portYIELD_FROM_ISR(hp_woken);
 }
 
 void LoadCellArray::taskLoop()
@@ -290,8 +290,11 @@ void LoadCellArray::taskLoop()
     LoadCellSample sample{};
 
     while (!stop_requested_) {
+        bool waited_for_ready = false;
+
         // Wait until all DOUT lines are low (new sample ready)
         while (!stop_requested_ && !allReady()) {
+            waited_for_ready = true;
             ulTaskNotifyTake(pdTRUE, cfg_.notify_timeout_ticks);
         }
         if (stop_requested_) {
@@ -318,6 +321,12 @@ void LoadCellArray::taskLoop()
                     xQueueSend(sample_queue_, &sample, 0);
                 }
             }
+        }
+
+        // If DOUT is stuck low, the loop can run flat-out and starve IDLE1.
+        // Yield one tick when we did not block in the readiness wait path.
+        if (!waited_for_ready) {
+            vTaskDelay(1);
         }
     }
 
@@ -392,7 +401,17 @@ void LoadCellArray::read4Parallel(int32_t out[LoadCellCount])
         esp_rom_delay_us(1);
     }
 
-    // 25th pulse → gain = 128 for next conversion (HX711 default channel A)
+    // 25th pulse → gain = 128 for next conversion (HX711 channel A)
+    // 26th pulse → gain = 32 for next conversion (HX711 channel B)
+    // 27th pulse → gain = 64 for next conversion (HX711 channel A)
+    gpio_set_level(cfg_.sck, 1);
+    esp_rom_delay_us(1);
+    gpio_set_level(cfg_.sck, 0);
+    esp_rom_delay_us(1);
+    gpio_set_level(cfg_.sck, 1);
+    esp_rom_delay_us(1);
+    gpio_set_level(cfg_.sck, 0);
+    esp_rom_delay_us(1);
     gpio_set_level(cfg_.sck, 1);
     esp_rom_delay_us(1);
     gpio_set_level(cfg_.sck, 0);
