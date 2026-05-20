@@ -4,7 +4,6 @@
 #include <harp_message.h>
 #include <core_registers.h>
 #include <harp_synchronizer.h>
-#include <arm_regs.h>
 #include <cstring> // for memcpy
 #include <tusb.h>
 #include <utility> // for std::to_underlying
