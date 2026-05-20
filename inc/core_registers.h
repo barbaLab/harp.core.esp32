@@ -88,9 +88,9 @@ struct RegValues
 
 struct RegSpecs
 {
-    volatile uint8_t* const base_ptr;
-    const uint8_t num_bytes;
-    const reg_type_t payload_type;
+    volatile uint8_t* base_ptr;
+    uint8_t num_bytes;
+    reg_type_t payload_type;
 };
 
 struct Registers
