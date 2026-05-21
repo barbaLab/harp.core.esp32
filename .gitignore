@@ -4,3 +4,6 @@ managed_components/
 .venv
 *.bin
 dependencies.lock
+examples/minimal_platformio/sdkconfig.esp32-s3-devkitc-1
+examples/minimal_platformio/.pio
+examples/minimal_platformio/managed_components

@@ -1,5 +1,5 @@
 {
-  "name": "harp-esp32",
+  "name": "harp.core.esp32",
   "version": "0.1.0",
   "description": "Harp core implementation for ESP32 targets (core + generic HarpCApp helper)",
   "keywords": ["harp", "esp32", "protocol", "uart"],

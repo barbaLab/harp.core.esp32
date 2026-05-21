@@ -1,7 +1,7 @@
 dependencies:
   idf: ">=5.2"
   espressif/esp_tinyusb: ">=2.0.0"
-  espressif/led_strip:   ">=3.0.0"
   harp_core_esp32:
-    git: https://github.com/barbaLab/harp.core.esp32.git
-    version: main
+    path: ../../../
+    # git: https://github.com/barbaLab/harp.core.esp32.git
+    # version: main
