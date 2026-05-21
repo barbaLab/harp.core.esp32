@@ -9,7 +9,6 @@ idf_component_register(
         harp_c_app.cpp
         main.cpp
     INCLUDE_DIRS
-        ${CMAKE_CURRENT_SOURCE_DIR}/../inc
     REQUIRES
         driver        # uart_driver_install, uart_param_config, etc.
         esp_timer     # esp_timer_get_time()
