@@ -1,8 +1,6 @@
 # This file was automatically generated for projects
 # without default 'CMakeLists.txt' file.
 
-FILE(GLOB_RECURSE app_sources ${CMAKE_SOURCE_DIR}/src/*.*)
-
 idf_component_register(
     SRCS
         core_registers.cpp
@@ -10,19 +8,13 @@ idf_component_register(
         harp_synchronizer.cpp
         harp_c_app.cpp
         main.cpp
-        bb_statusLED.cpp
-        app_statusLED.cpp
-        bb_loadcell.cpp
-        app_loadcell.cpp
     INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../inc
-        # ${CMAKE_CURRENT_SOURCE_DIR}/../lib
     REQUIRES
         driver        # uart_driver_install, uart_param_config, etc.
         esp_timer     # esp_timer_get_time()
         esp_system    # esp_restart(), esp_efuse_mac_get_default()
         tinyusb       # TinyUSB stack (espressif/esp_tinyusb managed component)
-        led_strip     # Adafruit NeoPixel library (espressif/led_strip managed component)
         )
 
 # # ESP-IDF adds -Wno-old-style-declaration (C-only) to all compile units including

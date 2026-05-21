@@ -24,8 +24,8 @@
  *
  */
 
-#ifndef _PICO_STDIO_USB_TUSB_CONFIG_H
-#define _PICO_STDIO_USB_TUSB_CONFIG_H
+#ifndef _ESP32_STDIO_USB_TUSB_CONFIG_H
+#define _ESP32_STDIO_USB_TUSB_CONFIG_H
 
 // ---------------------------------------------------------------------------
 // ESP32-S3: native USB 1.1 OTG on GPIO19/20 (RHPORT 0, device, full-speed).
@@ -44,4 +44,4 @@
 // We use a vendor specific interface but with our own driver
 #define CFG_TUD_VENDOR          (0)
 
-#endif // _PICO_STDIO_USB_TUSB_CONFIG_H
+#endif // _ESP32_STDIO_USB_TUSB_CONFIG_H

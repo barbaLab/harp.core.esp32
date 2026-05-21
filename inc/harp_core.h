@@ -15,10 +15,16 @@
 #include <esp_mac.h>
 #include <esp_efuse.h>
 
-// Project version
-inline constexpr size_t PICO_CORE_VERSION_MAJOR = 0;
-inline constexpr size_t PICO_CORE_VERSION_MINOR = 3;
-inline constexpr size_t PICO_CORE_VERSION_PATCH = 0;
+// Project version.
+inline constexpr size_t ESP32_CORE_VERSION_MAJOR = 0;
+inline constexpr size_t ESP32_CORE_VERSION_MINOR = 3;
+inline constexpr size_t ESP32_CORE_VERSION_PATCH = 0;
+
+// Backward-compatible aliases for downstream projects that still reference the
+// old symbol names.
+inline constexpr size_t PICO_CORE_VERSION_MAJOR = ESP32_CORE_VERSION_MAJOR;
+inline constexpr size_t PICO_CORE_VERSION_MINOR = ESP32_CORE_VERSION_MINOR;
+inline constexpr size_t PICO_CORE_VERSION_PATCH = ESP32_CORE_VERSION_PATCH;
 
 // Version of the Harp Protocol that this library most closely implements.
 inline constexpr size_t HARP_VERSION_MAJOR = 0;

@@ -413,8 +413,9 @@ void HarpCore::write_reset_dev(msg_t& msg)
     uint8_t& write_byte = *((uint8_t*)msg.payload);
     const bool& rst_dev_bit = bool((write_byte >> RST_DEV_OFFSET) & 1u);
     const bool& reset_dfu_bit = bool((write_byte >> RST_DFU_OFFSET) & 1u);
-    // On ESP32-S3 there is no USB bootloader (DFU) mode equivalent to the
-    // RP2040's reset_usb_boot(). esp_restart() performs a full chip reset
+    // On ESP32-S3 there is no USB bootloader (DFU) mode equivalent to
+    // reset_usb_boot()-style flows on some MCUs. esp_restart() performs a
+    // full chip reset
     // and re-enters the application; use it for both RST_DFU and RST_DEV
     // when a hard reset is requested.
     if (reset_dfu_bit)

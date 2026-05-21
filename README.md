@@ -1,6 +1,32 @@
 # harp.core.esp32
 
 An ESP32-S3 Harp Core implementation that uses ESP-IDF and TinyUSB to serve as the basis of a custom Harp device.
+
+## Using this Library from an App Repo
+
+This repository is intended to be consumed by application-specific firmware repos,
+using the same reusable core/app split used across Harp core projects.
+
+The core component lives in `src/` and can be referenced as a Component Manager
+git dependency from an app project's `idf_component.yml`.
+
+Example (`<app-repo>/main/idf_component.yml`):
+
+```yaml
+dependencies:
+	harp_core_esp32:
+		git: https://github.com/barbaLab/harp.core.esp32.git
+		path: src
+		version: main
+```
+
+In the app repo:
+
+1. Keep app-specific registers and handlers in the app repo (not in this repo).
+2. Initialize `HarpCApp` (or another `HarpCore`-derived class) in the app repo's
+	 `app_main`.
+3. Call `run()` periodically in the app task loop.
+
 ## Features
 
 * Parsing incoming Harp messages.
@@ -66,9 +92,11 @@ Two version groups are tracked in the code:
 * `HARP_VERSION_MAJOR`, `HARP_VERSION_MINOR`, `HARP_VERSION_PATCH`
 	* Tracks the Harp protocol version that this implementation most closely follows.
 	* Bump this when the protocol behavior changes.
-* `PICO_CORE_VERSION_MAJOR`, `PICO_CORE_VERSION_MINOR`, `PICO_CORE_VERSION_PATCH`
+
+* `ESP32_CORE_VERSION_MAJOR`, `ESP32_CORE_VERSION_MINOR`, `ESP32_CORE_VERSION_PATCH`
 	* Tracks this project's own implementation version.
 	* Bump this when the firmware behavior or API changes.
+	* `PICO_CORE_VERSION_*` aliases are still available for backward compatibility.
 ### Debugging
 
 The firmware uses ESP-IDF logging. `src/main.cpp` emits startup logs, and `src/harp_core.cpp` contains additional debug traces around message receive and transmit paths.
