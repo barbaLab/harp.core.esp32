@@ -1,3 +1,4 @@
+name: harp_core_esp32
 description: Harp core implementation for ESP32 targets (core + generic HarpCApp helper)
 url: https://github.com/barbaLab/harp.core.esp32.git
 version: "0.1.0"

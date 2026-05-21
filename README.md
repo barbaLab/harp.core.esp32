@@ -44,13 +44,13 @@ This firmware uses two separate interfaces in the current board setup:
 On the current hardware this typically shows up as two COM ports in Windows. The COM numbers are assigned by Windows; the firmware only defines the functions.
 ## Current Implementation
 
-* `src/main.cpp` initializes `HarpCore`, optionally attaches `HarpSynchronizer`, and runs the Harp loop.
+* `examples/minimal_platformio/src/main.cpp` initializes `HarpCore`, optionally attaches `HarpSynchronizer`, and runs the Harp loop for local development/testing.
 * `src/harp_core.cpp` implements message parsing, register access, heartbeat handling, and reply generation.
 * `src/harp_synchronizer.cpp` listens on a UART RX pin and updates Harp time from external sync packets.
 * `src/usb_descriptors.c` defines the TinyUSB CDC descriptors used for the Harp device channel.
 ## Using This Project
 
-The simplest way to work with this project is to build and flash it with PlatformIO, then talk to it with the Python Harp client over the Harp CDC COM port.
+The simplest way to work with this project is to use the dev app under `examples/minimal_platformio`, then talk to it with the Python Harp client over the Harp CDC COM port.
 
 The test scripts under `test/` are the primary examples of how to interact with the device.
 ### Python API
@@ -67,22 +67,23 @@ For heartbeat tests, the current API is:
 Use PlatformIO for the ESP32-S3 board profile.
 
 ```bash
-pio run
+cd examples/minimal_platformio
+C:\Users\fedba\.platformio\penv\Scripts\platformio.exe run
 ```
 ## Flashing the Firmware
 
 ```bash
-pio run --target upload
+C:\Users\fedba\.platformio\penv\Scripts\platformio.exe run --target upload
 ```
 
 If your board exposes separate COM ports, use the Harp CDC port for Python communication and the console port for logs.
 ## Monitoring
 
 ```bash
-pio device monitor
+C:\Users\fedba\.platformio\penv\Scripts\platformio.exe device monitor
 ```
 
-The monitor should show the startup logs emitted from `src/main.cpp`.
+The monitor should show the startup logs emitted from `examples/minimal_platformio/src/main.cpp`.
 ## Developer Notes
 
 ### Bumping the Version
@@ -99,11 +100,11 @@ Two version groups are tracked in the code:
 	* `PICO_CORE_VERSION_*` aliases are still available for backward compatibility.
 ### Debugging
 
-The firmware uses ESP-IDF logging. `src/main.cpp` emits startup logs, and `src/harp_core.cpp` contains additional debug traces around message receive and transmit paths.
+The firmware uses ESP-IDF logging. `examples/minimal_platformio/src/main.cpp` emits startup logs, and `src/harp_core.cpp` contains additional debug traces around message receive and transmit paths.
 
 ### Optional Synchronization
 
-`HarpSynchronizer` can be enabled from `src/main.cpp` by turning on the UART sync path and setting the correct RX pin and UART port for your hardware.
+`HarpSynchronizer` can be enabled from `examples/minimal_platformio/src/main.cpp` by turning on the UART sync path and setting the correct RX pin and UART port for your hardware.
 ## Tests
 
 The scripts in `test/` exercise the device over the Harp Python package.

@@ -1,5 +1,5 @@
 {
-  "name": "harp",
+  "name": "harp-esp32",
   "version": "0.1.0",
   "description": "Harp core implementation for ESP32 targets (core + generic HarpCApp helper)",
   "keywords": ["harp", "esp32", "protocol", "uart"],
@@ -20,5 +20,23 @@
       "name": "espressif/esp_tinyusb",
       "version": ">=2.0.0"
     }
-  ]
+  ],
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src"
+  },
+  "export": {
+    "exclude": [
+      ".git",
+      ".pio",
+      ".vscode",
+      "dependencies.lock",
+      "platformio.ini",
+      "sdkconfig.defaults",
+      "sdkconfig.*",
+      "test",
+      "examples",
+      "docs"
+    ]
+  }
 }
