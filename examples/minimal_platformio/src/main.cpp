@@ -32,7 +32,7 @@ constexpr TickType_t kCoreLoopDelayTicks = 1;
 
 constexpr uint32_t kCoreTaskStackWords = 4096;
 constexpr UBaseType_t kCoreTaskPriority = 8;
-constexpr BaseType_t kCoreTaskCore = 0;
+constexpr BaseType_t kCoreTaskCore = 1;
 
 void core_task(void* /*arg*/)
 {

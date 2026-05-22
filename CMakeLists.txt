@@ -3,6 +3,7 @@ idf_component_register(
         src/core_registers.cpp
         src/harp_core.cpp
         src/harp_synchronizer.cpp
+        src/network_manager.cpp
         src/usb_descriptors.c
     INCLUDE_DIRS
         "include"
@@ -10,6 +11,11 @@ idf_component_register(
         esp_driver_uart        # uart_driver_install, uart_param_config, etc.
         esp_timer     # esp_timer_get_time()
         esp_system    # esp_restart(), esp_efuse_mac_get_default()
+        esp_event
+        esp_netif
+        esp_wifi
+        lwip
+        nvs_flash
         efuse
         esp_tinyusb   # TinyUSB stack (espressif/esp_tinyusb managed component)
 )
