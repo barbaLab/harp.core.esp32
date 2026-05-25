@@ -9,3 +9,4 @@ examples/minimal_platformio/.pio
 examples/minimal_platformio/managed_components
 examples/minimal_platformio/sdkconfig.esp32-s3-devkitc-1
 *.png
+examples/minimal_platformio/test/__pycache__/*.pyc
