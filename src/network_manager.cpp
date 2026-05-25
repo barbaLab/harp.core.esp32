@@ -11,7 +11,9 @@
 #include <esp_wifi.h>
 #include <esp_event.h>
 #include <esp_netif.h>
+#include <esp_timer.h>
 #include <esp_log.h>
+#include <nvs.h>
 #include <nvs_flash.h>
 #include <lwip/sockets.h>
 #include <lwip/netdb.h>
@@ -25,6 +27,10 @@ namespace NetworkManager {
 static std::atomic<bool> s_wifi_connected{false};
 static std::atomic<bool> s_tcp_connected{false};
 static std::atomic<int>  s_tcp_sock{-1};
+static std::atomic<bool> s_reconnect_enabled{false};
+static std::atomic<bool> s_reconnect_pending{false};
+static std::atomic<uint32_t> s_reconnect_attempts{0};
+static std::atomic<int64_t> s_next_reconnect_us{0};
 
 static TaskHandle_t s_task_handle = nullptr;
 static esp_netif_t* s_netif_sta   = nullptr;
@@ -51,6 +57,198 @@ static constexpr uint8_t NET_STATUS_WIFI_UP = 1u << 3;
 static constexpr uint8_t NET_STATUS_IP_OK = 1u << 4;
 static constexpr uint8_t NET_STATUS_TCP_CONN = 1u << 5;
 
+static constexpr const char* kNvsNamespace = "harp_net";
+static constexpr const char* kNvsCfgKey = "cfg_v1";
+
+struct PersistedCfgV1 {
+    uint32_t version;
+    CfgSnapshot cfg;
+};
+
+static constexpr uint32_t kPersistVersion = 1;
+static constexpr uint32_t kTcpReconnectBaseDelayMs = 500;
+static constexpr uint32_t kTcpReconnectMaxDelayMs  = 8000;
+
+static inline void cfg_ensure_terminated(CfgSnapshot& cfg)
+{
+    cfg.ssid[sizeof(cfg.ssid) - 1] = '\0';
+    cfg.password[sizeof(cfg.password) - 1] = '\0';
+    cfg.server_ip[sizeof(cfg.server_ip) - 1] = '\0';
+}
+
+static inline void apply_cfg_to_regs(const CfgSnapshot& cfg)
+{
+    if (s_regs == nullptr)
+        return;
+
+    memcpy((void*)s_regs->R_NET_SSID, cfg.ssid, sizeof(cfg.ssid));
+    memcpy((void*)s_regs->R_NET_PASSWORD, cfg.password, sizeof(cfg.password));
+    memcpy((void*)s_regs->R_NET_SERVER_IP, cfg.server_ip, sizeof(cfg.server_ip));
+    s_regs->R_NET_SERVER_PORT[0] = static_cast<uint8_t>(cfg.server_port & 0xFFu);
+    s_regs->R_NET_SERVER_PORT[1] = static_cast<uint8_t>((cfg.server_port >> 8) & 0xFFu);
+    s_regs->R_NET_CONFIG = static_cast<uint8_t>(cfg.enable & (NET_ENABLE_WIFI | NET_ENABLE_TCP));
+}
+
+static bool save_cfg_to_nvs(const CfgSnapshot& cfg)
+{
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGW(kNetMgrLogTag, "NVS open(save) failed: %s (%d)",
+                 esp_err_to_name(err),
+                 static_cast<int>(err));
+        return false;
+    }
+
+    PersistedCfgV1 persisted{};
+    persisted.version = kPersistVersion;
+    persisted.cfg = cfg;
+
+    err = nvs_set_blob(nvs, kNvsCfgKey, &persisted, sizeof(persisted));
+    if (err == ESP_OK)
+        err = nvs_commit(nvs);
+    nvs_close(nvs);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(kNetMgrLogTag, "NVS save cfg_v1 failed: %s (%d)",
+                 esp_err_to_name(err),
+                 static_cast<int>(err));
+        return false;
+    }
+
+    ESP_LOGI(kNetMgrLogTag, "NVS save cfg_v1 OK");
+    return true;
+}
+
+static bool load_cfg_from_nvs(CfgSnapshot* out)
+{
+    if (out == nullptr)
+        return false;
+
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READONLY, &nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(kNetMgrLogTag, "NVS load cfg_v1 skipped: namespace/key not found");
+        return false;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(kNetMgrLogTag, "NVS open(load) failed: %s (%d)",
+                 esp_err_to_name(err),
+                 static_cast<int>(err));
+        return false;
+    }
+
+    PersistedCfgV1 persisted{};
+    size_t blob_size = sizeof(persisted);
+    err = nvs_get_blob(nvs, kNvsCfgKey, &persisted, &blob_size);
+    nvs_close(nvs);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(kNetMgrLogTag, "NVS load cfg_v1 skipped: key not found");
+        return false;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(kNetMgrLogTag, "NVS load cfg_v1 failed: %s (%d)",
+                 esp_err_to_name(err),
+                 static_cast<int>(err));
+        return false;
+    }
+    if (blob_size != sizeof(persisted)) {
+        ESP_LOGW(kNetMgrLogTag,
+                 "NVS load cfg_v1 failed: blob size mismatch got=%u expected=%u",
+                 static_cast<unsigned>(blob_size),
+                 static_cast<unsigned>(sizeof(persisted)));
+        return false;
+    }
+    if (persisted.version != kPersistVersion) {
+        ESP_LOGW(kNetMgrLogTag,
+                 "NVS load cfg_v1 failed: version mismatch got=%u expected=%u",
+                 static_cast<unsigned>(persisted.version),
+                 static_cast<unsigned>(kPersistVersion));
+        return false;
+    }
+
+    *out = persisted.cfg;
+    cfg_ensure_terminated(*out);
+    ESP_LOGI(kNetMgrLogTag, "NVS load cfg_v1 OK");
+    return true;
+}
+
+static void erase_cfg_from_nvs()
+{
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGW(kNetMgrLogTag, "NVS open(erase) failed: %s (%d)",
+                 esp_err_to_name(err),
+                 static_cast<int>(err));
+        return;
+    }
+
+    err = nvs_erase_key(nvs, kNvsCfgKey);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(nvs);
+        ESP_LOGI(kNetMgrLogTag, "NVS erase cfg_v1 skipped: key not found");
+        return;
+    }
+
+    if (err == ESP_OK)
+        err = nvs_commit(nvs);
+    nvs_close(nvs);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(kNetMgrLogTag, "NVS erase cfg_v1 failed: %s (%d)",
+                 esp_err_to_name(err),
+                 static_cast<int>(err));
+        return;
+    }
+
+    ESP_LOGI(kNetMgrLogTag, "NVS erase cfg_v1 OK");
+}
+
+static inline uint32_t reconnect_delay_ms(uint32_t attempt_idx)
+{
+    uint32_t shift = (attempt_idx > 8) ? 8 : attempt_idx;
+    uint32_t delay = kTcpReconnectBaseDelayMs << shift;
+    if (delay > kTcpReconnectMaxDelayMs)
+        delay = kTcpReconnectMaxDelayMs;
+    return delay;
+}
+
+static inline void clear_reconnect_policy()
+{
+    s_reconnect_pending = false;
+    s_reconnect_attempts = 0;
+    s_next_reconnect_us = 0;
+}
+
+static inline void schedule_tcp_reconnect(const char* reason)
+{
+    if (!s_reconnect_enabled.load())
+        return;
+    if (!(s_cfg.enable & NET_ENABLE_TCP))
+        return;
+    if (!s_wifi_connected.load())
+        return;
+    if (s_cmd == NetCmd::DISCONNECT)
+        return;
+
+    uint32_t attempt_idx = s_reconnect_attempts.fetch_add(1);
+    uint32_t delay_ms = reconnect_delay_ms(attempt_idx);
+    int64_t now_us = esp_timer_get_time();
+    s_next_reconnect_us = now_us + static_cast<int64_t>(delay_ms) * 1000;
+    s_reconnect_pending = true;
+
+    ESP_LOGW(kNetMgrLogTag,
+             "Scheduling TCP reconnect (%s): attempt=%u delay=%u ms",
+             reason ? reason : "n/a",
+             static_cast<unsigned>(attempt_idx + 1),
+             static_cast<unsigned>(delay_ms));
+
+    if (s_task_handle)
+        xTaskNotifyGive(s_task_handle);
+}
+
 static inline void set_status_bits(uint8_t bits_to_set, uint8_t bits_to_clear)
 {
     if (s_regs == nullptr)
@@ -72,12 +270,13 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
         s_tcp_connected  = false;
+        s_reconnect_pending = false;
         int fd = s_tcp_sock.exchange(-1);
         if (fd >= 0) lwip_close(fd);
         ESP_LOGW(kNetMgrLogTag, "Wi-Fi disconnected");
         set_status_bits(0, NET_STATUS_WIFI_UP | NET_STATUS_IP_OK | NET_STATUS_TCP_CONN);
         // Attempt reconnect if we still hold a valid config
-        if (s_cfg.ssid[0] != '\0') {
+        if (s_cmd == NetCmd::APPLY && s_reconnect_enabled.load() && s_cfg.ssid[0] != '\0') {
             esp_err_t err = esp_wifi_connect();
             if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
                 ESP_LOGW(kNetMgrLogTag,
@@ -135,10 +334,24 @@ static int tcp_connect(const char* ip, uint16_t port)
 static void network_task(void* /*arg*/)
 {
     for (;;) {
-        // Block until the Harp task notifies us or Wi-Fi gets an IP
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        // Wait for explicit notifications, or for a scheduled reconnect deadline.
+        TickType_t wait_ticks = portMAX_DELAY;
+        if (s_reconnect_pending.load()) {
+            int64_t now_us = esp_timer_get_time();
+            int64_t due_us = s_next_reconnect_us.load();
+            if (due_us <= now_us) {
+                wait_ticks = 0;
+            } else {
+                uint32_t delta_ms = static_cast<uint32_t>((due_us - now_us + 999) / 1000);
+                if (delta_ms == 0)
+                    delta_ms = 1;
+                wait_ticks = pdMS_TO_TICKS(delta_ms);
+            }
+        }
+        ulTaskNotifyTake(pdTRUE, wait_ticks);
 
         if (s_cmd == NetCmd::DISCONNECT) {
+            clear_reconnect_policy();
             int fd = s_tcp_sock.exchange(-1);
             if (fd >= 0) lwip_close(fd);
             s_tcp_connected = false;
@@ -149,6 +362,11 @@ static void network_task(void* /*arg*/)
         // APPLY: Wi-Fi is already up (IP_EVENT triggered this), try TCP
         if (!s_wifi_connected || s_cfg.server_ip[0] == '\0') continue;
         if (!(s_cfg.enable & NET_ENABLE_TCP)) continue;
+        if (s_reconnect_pending.load()) {
+            int64_t now_us = esp_timer_get_time();
+            if (now_us < s_next_reconnect_us.load())
+                continue;
+        }
 
         // Close old socket if present
         int old_fd = s_tcp_sock.exchange(-1);
@@ -159,12 +377,11 @@ static void network_task(void* /*arg*/)
         if (fd >= 0) {
             s_tcp_sock  = fd;
             s_tcp_connected = true;
+            clear_reconnect_policy();
             set_status_bits(NET_STATUS_TCP_CONN, 0);
         } else {
             set_status_bits(0, NET_STATUS_TCP_CONN);
-            ESP_LOGE(kNetMgrLogTag, "TCP connect failed; retry in 5 s");
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            xTaskNotifyGive(s_task_handle); // retry
+            schedule_tcp_reconnect("connect failed");
         }
     }
 }
@@ -199,6 +416,16 @@ void init(RegValues* regs)
     
     xTaskCreatePinnedToCore(network_task, "net_task", 4096, nullptr, 5, &s_task_handle, 0);
     ESP_LOGI(kNetMgrLogTag, "NetworkManager initialised");
+
+    CfgSnapshot restored{};
+    if (load_cfg_from_nvs(&restored)) {
+        apply_cfg_to_regs(restored);
+        ESP_LOGI(kNetMgrLogTag, "Restored network config from NVS");
+        if (restored.enable & NET_ENABLE_WIFI) {
+            ESP_LOGI(kNetMgrLogTag, "Auto-applying restored network config");
+            apply();
+        }
+    }
 }
 
 void apply()
@@ -209,6 +436,8 @@ void apply()
     }
 
     if (!(s_regs->R_NET_CONFIG & NET_ENABLE_WIFI)) {
+        s_reconnect_enabled = false;
+        clear_reconnect_policy();
         ESP_LOGI(kNetMgrLogTag, "Wi-Fi not enabled; skipping");
         return;
     }
@@ -222,9 +451,14 @@ void apply()
     s_cfg.enable = s_regs->R_NET_CONFIG;
 
     // Ensure null-termination for safety when passing to C APIs.
-    s_cfg.ssid[sizeof(s_cfg.ssid) - 1] = '\0';
-    s_cfg.password[sizeof(s_cfg.password) - 1] = '\0';
-    s_cfg.server_ip[sizeof(s_cfg.server_ip) - 1] = '\0';
+    cfg_ensure_terminated(s_cfg);
+    s_reconnect_enabled = true;
+    clear_reconnect_policy();
+
+    if (!save_cfg_to_nvs(s_cfg)) {
+        ESP_LOGW(kNetMgrLogTag, "Proceeding without persisted config update");
+    }
+
     set_status_bits(NET_STATUS_CFG_VALID, NET_STATUS_WIFI_UP | NET_STATUS_IP_OK | NET_STATUS_TCP_CONN);
 
     // (Re)configure the station
@@ -269,6 +503,9 @@ void apply()
 void disconnect()
 {
     s_cmd = NetCmd::DISCONNECT;
+    s_reconnect_enabled = false;
+    clear_reconnect_policy();
+    erase_cfg_from_nvs();
     if (s_task_handle) xTaskNotifyGive(s_task_handle);
 }
 
@@ -290,6 +527,7 @@ void tcp_write(const uint8_t* data, size_t len)
             lwip_close(old_fd);
         s_tcp_connected = false;
         set_status_bits(0, NET_STATUS_TCP_CONN);
+        schedule_tcp_reconnect("tcp_write failed");
     }
 }
 
@@ -303,12 +541,15 @@ int tcp_read(uint8_t* data, size_t len)
     if (n > 0)
         return n;
 
+    const char* reconnect_reason = nullptr;
     if (n == 0) {
         ESP_LOGW(kNetMgrLogTag, "TCP peer closed connection");
+        reconnect_reason = "peer closed";
     } else {
         if (errno == EWOULDBLOCK || errno == EAGAIN)
             return 0;
         ESP_LOGW(kNetMgrLogTag, "tcp_read failed: errno %d", errno);
+        reconnect_reason = "tcp_read failed";
     }
 
     int old_fd = s_tcp_sock.exchange(-1);
@@ -316,6 +557,7 @@ int tcp_read(uint8_t* data, size_t len)
         lwip_close(old_fd);
     s_tcp_connected = false;
     set_status_bits(0, NET_STATUS_TCP_CONN);
+    schedule_tcp_reconnect(reconnect_reason);
     return -1;
 }
 

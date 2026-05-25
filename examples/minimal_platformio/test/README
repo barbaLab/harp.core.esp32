@@ -3,6 +3,10 @@ Python test scripts for validating Harp behavior on the ESP32-S3 firmware.
 These scripts are host-side integration checks. They are not PlatformIO unit
 tests.
 
+TODO:
+- The TCP test path currently uses a custom local wire/parsing utility.
+- Replace it with official Harp library TCP integration once available.
+
 ## Prerequisites
 
 - Firmware flashed and running on the target board.
@@ -54,6 +58,27 @@ Heartbeat control uses `device.alive_en(True/False)`.
 	- Prints summary stats and shows a histogram.
 	- Uses a built-in console progress indicator (no extra progress-bar library required).
 
+- `tcp_test_config.py`
+	- Scripted parameters for TCP tests (USB port, SSID/password, server endpoint, timeouts).
+	- Update this file once; no CLI arguments are required for TCP tests.
+
+- `harp_tcp_test_utils.py`
+	- Shared TCP test utilities (wire format, parser, USB network provisioning, socket accept helper).
+
+- `test_tcp_rtt.py`
+	- TCP round-trip timing test using scripted parameters.
+
+- `test_tcp_heartbeat.py`
+	- TCP heartbeat validation (enables ALIVE_EN and checks heartbeat event intervals).
+
+- `test_tcp_wifi_config_reconnect_persistence.py`
+	- Configures Wi-Fi/TCP over USB.
+	- Verifies reconnect after server-side socket close.
+	- Reboots device and verifies reconnect without re-provisioning (persistence path).
+
+- `test_harp_tcp.py`
+	- Runs all three scripted TCP tests in sequence.
+
 ## Running a Script
 
 From the project root:
@@ -74,8 +99,23 @@ Run timing test:
 python test/test_reply_speed.py
 ```
 
+Run split scripted TCP tests:
+
+```bash
+python test/test_tcp_rtt.py
+python test/test_tcp_heartbeat.py
+python test/test_tcp_wifi_config_reconnect_persistence.py
+```
+
+Run all scripted TCP tests:
+
+```bash
+python test/test_harp_tcp.py
+```
+
 ## Notes
 
 - Many scripts currently default to `COM5` on Windows.
 - On Linux they use `/dev/ttyACM0` by default.
 - `ibl.bin` is used as the dump file argument when opening `Device`.
+- TCP scripted tests read parameters from `tcp_test_config.py` (no interactive input).
