@@ -145,43 +145,80 @@ sequenceDiagram
 	participant NT as network_task
 	participant AP as Wi-Fi AP
 	participant S as TCP Server
+	participant T as Reconnect Timer
+	participant C as TCP Session(fd)
 
 	Host->>NM: apply()
+	activate NM
 	NM->>AP: esp_wifi_connect()
-	AP-->>EVT: WIFI_EVENT_STA_CONNECTED
-	EVT-->>NM: wifi_event_handler(...CONNECTED)
-	AP-->>EVT: IP_EVENT_STA_GOT_IP
-	EVT-->>NM: wifi_event_handler(...GOT_IP)
-	NM->>NT: xTaskNotifyGive(task)
+	deactivate NM
+
+	AP--)EVT: WIFI_EVENT_STA_CONNECTED (async event)
+	activate EVT
+	EVT--)NM: wifi_event_handler(...CONNECTED)
+	deactivate EVT
+	activate NM
+	deactivate NM
+
+	AP--)EVT: IP_EVENT_STA_GOT_IP (async event)
+	activate EVT
+	EVT--)NM: wifi_event_handler(...GOT_IP)
+	deactivate EVT
+	activate NM
+	NM--)NT: xTaskNotifyGive(task)
+	deactivate NM
+
+	activate NT
 	NT->>S: tcp_connect(server_ip, port)
 
 	alt TCP connect succeeds
 		S-->>NT: SYN/ACK + established
+		NT->>C: create socket fd / mark connected
+		activate C
 		NT->>NM: set tcp connected + clear retry state
 	else TCP connect fails
 		S-->>NT: connect error
 		NT->>NM: schedule_tcp_reconnect("connect failed")
-		NM->>NT: notify + deadline wait
+		activate NM
+		NM--)T: arm deadline (async)
+		deactivate NM
+		T--)NT: timeout expiry
 	end
+	deactivate NT
 
-	S-->>NM: peer closes socket (recv=0 or send fail)
-	NM->>NM: close fd + clear tcp status
+	S--)NM: peer closes socket (recv=0 or send fail)
+	activate NM
+	NM->>C: close fd + clear tcp status
+	deactivate C
 	NM->>NM: schedule_tcp_reconnect(reason)
-	NM->>NT: xTaskNotifyGive(task)
+	NM--)T: arm deadline (async)
+	NM--)NT: xTaskNotifyGive(task)
+	deactivate NM
+	activate NT
 	NT->>NT: wait until reconnect deadline
+	T--)NT: timeout expiry
 	NT->>S: tcp_connect(server_ip, port)
+	deactivate NT
 
-	AP-->>EVT: WIFI_EVENT_STA_DISCONNECTED
-	EVT-->>NM: wifi_event_handler(...DISCONNECTED)
+	AP--)EVT: WIFI_EVENT_STA_DISCONNECTED (async event)
+	activate EVT
+	EVT--)NM: wifi_event_handler(...DISCONNECTED)
+	deactivate EVT
+	activate NM
 	NM->>NM: clear wifi/ip/tcp status
 	alt command is APPLY and reconnect enabled
 		NM->>AP: esp_wifi_connect()
 	else command is DISCONNECT
 		NM-->>AP: no reconnect request
 	end
+	deactivate NM
 
 	Host->>NM: disconnect()
-	NM->>NT: notify + set DISCONNECT
+	activate NM
+	NM--)NT: notify + set DISCONNECT
+	deactivate NM
+	activate NT
 	NT->>NM: clear retry state + close tcp
 	NT->>AP: esp_wifi_disconnect()
+	deactivate NT
 ```
