@@ -3,6 +3,7 @@
 #include <tinyusb.h>
 #include <tinyusb_default_config.h>
 
+#include <algorithm>
 #include <esp_log.h>
 
 static const char* kHarpCoreLogTag = "HarpCore";
@@ -50,7 +51,10 @@ HarpCore::HarpCore(uint16_t who_am_i,
  regs_{who_am_i, hw_version_major, hw_version_minor, assembly_version,
        harp_version_major, harp_version_minor,
        fw_version_major, fw_version_minor, serial_number, name, tag},
- rx_buffer_index_{0}, total_bytes_read_{rx_buffer_index_},
+ tcp_rx_index_{0},
+ cdc_rx_index_{0},
+ active_rx_buffer_{nullptr},
+ buffered_msg_source_{TransportSource::None},
  offset_us_64_{0},
  disconnect_handled_{false}, connect_handled_{false}, sync_handled_{false},
  heartbeat_interval_us_{HEARTBEAT_STANDBY_INTERVAL_US}
@@ -86,10 +90,10 @@ void HarpCore::run()
     // tusb_init()); tud_task() must NOT be called from application code.
     update_state();
     update_app_state(); // Does nothing unless a derived class implements it.
+    refresh_net_config_status_bits();
     // Accept incoming Harp commands over both TCP and USB CDC.
     process_tcp_input();
-    if (!new_msg_)
-        process_cdc_input();
+    process_cdc_input();
     if (not new_msg_)
         return;
 #ifdef DEBUG_HARP_MSG_IN
@@ -127,78 +131,107 @@ void HarpCore::run()
 
 void HarpCore::process_tcp_input()
 {
-    uint32_t max_bytes_to_read = sizeof(rx_buffer_) - rx_buffer_index_;
-    if (total_bytes_read_ >= sizeof(msg_header_t))
-    {
-        msg_header_t& header = get_buffered_msg_header();
-        max_bytes_to_read = header.msg_size() - total_bytes_read_;
-    }
-
-    int bytes_read = NetworkManager::tcp_read(&(rx_buffer_[rx_buffer_index_]),
-                                              max_bytes_to_read);
-    if (bytes_read <= 0)
-        return;
-
-    ESP_LOGD(kHarpCoreLogTag, "RX(TCP) bytes=%u buffered=%u",
-             (unsigned)bytes_read,
-             (unsigned)rx_buffer_index_ + (unsigned)bytes_read);
-    rx_buffer_index_ += static_cast<uint8_t>(bytes_read);
-
-    if (total_bytes_read_ < sizeof(msg_header_t))
-        return;
-    msg_header_t& header = get_buffered_msg_header();
-    if (total_bytes_read_ < header.msg_size())
-        return;
-
-    ESP_LOGD(kHarpCoreLogTag,
-             "RX(TCP) msg type=%u addr=%u raw_len=%u payload_type=0x%02X",
-             (unsigned)header.type,
-             (unsigned)header.address,
-             (unsigned)header.raw_length,
-             (unsigned)header.payload_type);
-    rx_buffer_index_ = 0;
-    new_msg_ = true;
+    process_transport_input(
+        tcp_rx_buffer_,
+        &tcp_rx_index_,
+        TransportSource::Tcp,
+        [](uint8_t* data, size_t len) -> int { return NetworkManager::tcp_read(data, len); },
+        "TCP");
 }
 
 void HarpCore::process_cdc_input()
 {
-    if (not tud_cdc_available())
+    process_transport_input(
+        cdc_rx_buffer_,
+        &cdc_rx_index_,
+        TransportSource::Cdc,
+        [](uint8_t* data, size_t len) -> int {
+            if (!tud_cdc_available())
+                return 0;
+            return static_cast<int>(tud_cdc_read(data, len));
+        },
+        "CDC");
+}
+
+void HarpCore::process_transport_input(uint8_t* buffer, size_t* buffer_index,
+                                       TransportSource source,
+                                       int (*read_fn)(uint8_t*, size_t),
+                                       const char* transport_name)
+{
+    if (new_msg_)
         return;
-    uint32_t max_bytes_to_read = sizeof(rx_buffer_) - rx_buffer_index_;
-    if (total_bytes_read_ >= sizeof(msg_header_t))
+
+    if (*buffer_index >= MAX_PACKET_SIZE)
+        *buffer_index = 0;
+
+    size_t max_bytes_to_read = MAX_PACKET_SIZE - *buffer_index;
+    if (*buffer_index >= sizeof(msg_header_t))
     {
-        msg_header_t& header = get_buffered_msg_header();
-        max_bytes_to_read = header.msg_size() - total_bytes_read_;
+        msg_header_t& header = *((msg_header_t*)(buffer));
+        size_t msg_size = std::min(static_cast<size_t>(header.msg_size()),
+                                   static_cast<size_t>(MAX_PACKET_SIZE));
+        if (msg_size > *buffer_index)
+            max_bytes_to_read = std::min(max_bytes_to_read, msg_size - *buffer_index);
+        else
+            max_bytes_to_read = 0;
     }
-    uint32_t bytes_read = tud_cdc_read(&(rx_buffer_[rx_buffer_index_]),
-                                       max_bytes_to_read);
-    if (bytes_read > 0)
-        ESP_LOGD(kHarpCoreLogTag, "RX bytes=%lu buffered=%u",
-                 (unsigned long)bytes_read,
-                 (unsigned)rx_buffer_index_ + (unsigned)bytes_read);
-    rx_buffer_index_ += bytes_read;
-    if (total_bytes_read_ < sizeof(msg_header_t))
+    if (max_bytes_to_read == 0)
         return;
-    msg_header_t& header = get_buffered_msg_header();
-    if (total_bytes_read_ < header.msg_size())
+
+    int bytes_read = read_fn(&(buffer[*buffer_index]), max_bytes_to_read);
+    if (bytes_read <= 0)
         return;
+
+    const size_t safe_read = std::min(static_cast<size_t>(bytes_read), max_bytes_to_read);
+    ESP_LOGD(kHarpCoreLogTag, "RX(%s) bytes=%u buffered=%u",
+             transport_name,
+             static_cast<unsigned>(safe_read),
+             static_cast<unsigned>(*buffer_index + safe_read));
+    *buffer_index += safe_read;
+
+    if (*buffer_index < sizeof(msg_header_t))
+        return;
+
+    msg_header_t& header = *((msg_header_t*)(buffer));
+    const size_t msg_size = std::min(static_cast<size_t>(header.msg_size()),
+                                     static_cast<size_t>(MAX_PACKET_SIZE));
+    if (*buffer_index < msg_size)
+        return;
+
     ESP_LOGD(kHarpCoreLogTag,
-             "RX msg type=%u addr=%u raw_len=%u payload_type=0x%02X",
+             "RX(%s) msg type=%u addr=%u raw_len=%u payload_type=0x%02X",
+             transport_name,
              (unsigned)header.type,
              (unsigned)header.address,
              (unsigned)header.raw_length,
              (unsigned)header.payload_type);
-    rx_buffer_index_ = 0;
+    active_rx_buffer_ = buffer;
+    buffered_msg_source_ = source;
+    *buffer_index = 0;
     new_msg_ = true;
-    return;
 }
 
 msg_t HarpCore::get_buffered_msg()
 {
     msg_header_t& header = get_buffered_msg_header();
-    void* payload = rx_buffer_ + header.payload_base_index_offset();
-    uint8_t& checksum = *(rx_buffer_ + header.checksum_index_offset());
+    void* payload = active_rx_buffer_ + header.payload_base_index_offset();
+    uint8_t& checksum = *(active_rx_buffer_ + header.checksum_index_offset());
     return msg_t{header, payload, checksum};
+}
+
+void HarpCore::refresh_net_config_status_bits()
+{
+    uint8_t enable_bits = self->regs.R_NET_CONFIG & (NET_ENABLE_WIFI | NET_ENABLE_TCP);
+    uint8_t status_bits = 0;
+
+    if (self->regs.R_NET_SSID[0] != '\0' && self->regs.R_NET_SERVER_IP[0] != '\0')
+        status_bits |= NET_STATUS_CFG_VALID;
+    if (NetworkManager::is_wifi_connected())
+        status_bits |= NET_STATUS_WIFI_UP | NET_STATUS_IP_OK;
+    if (NetworkManager::is_tcp_connected())
+        status_bits |= NET_STATUS_TCP_CONN;
+
+    self->regs.R_NET_CONFIG = static_cast<uint8_t>(enable_bits | (status_bits & NET_STATUS_MASK));
 }
 
 void HarpCore::handle_buffered_core_message()
@@ -343,12 +376,21 @@ void HarpCore::send_harp_reply(msg_type_t reply_type, uint8_t reg_name,
     }
     printf("\r\n\r\n");
 #endif
+    const bool is_event = (reply_type == EVENT);
+    const bool route_cdc =
+        is_event || self->buffered_msg_source_ == TransportSource::None
+        || self->buffered_msg_source_ == TransportSource::Cdc;
+    const bool route_tcp =
+        is_event || self->buffered_msg_source_ == TransportSource::None
+        || self->buffered_msg_source_ == TransportSource::Tcp;
+
     for (uint8_t i = 0; i < sizeof(header); ++i)
     {
         uint8_t& byte = *(((uint8_t*)(&header))+i);
         checksum += byte;
         packet_buf[packet_len++] = byte;
-        tud_cdc_write_char(byte);
+        if (route_cdc)
+            tud_cdc_write_char(byte);
     }
     self->set_timestamp_regs(harp_time_us);
     for (uint8_t i = 0; i < sizeof(self->regs.R_TIMESTAMP_SECOND); ++i)
@@ -356,29 +398,35 @@ void HarpCore::send_harp_reply(msg_type_t reply_type, uint8_t reg_name,
         uint8_t& byte = *(((uint8_t*)(&self->regs.R_TIMESTAMP_SECOND)) + i);
         checksum += byte;
         packet_buf[packet_len++] = byte;
-        tud_cdc_write_char(byte);
+        if (route_cdc)
+            tud_cdc_write_char(byte);
     }
     for (uint8_t i = 0; i < sizeof(self->regs.R_TIMESTAMP_MICRO); ++i)
     {
         uint8_t& byte = *(((uint8_t*)(&self->regs.R_TIMESTAMP_MICRO)) + i);
         checksum += byte;
         packet_buf[packet_len++] = byte;
-        tud_cdc_write_char(byte);
+        if (route_cdc)
+            tud_cdc_write_char(byte);
     }
     for (uint8_t i = 0; i < num_bytes; ++i)
     {
         const volatile uint8_t& byte = *(data + i);
         checksum += byte;
         packet_buf[packet_len++] = byte;
-        tud_cdc_write_char(byte);
+        if (route_cdc)
+            tud_cdc_write_char(byte);
     }
     packet_buf[packet_len++] = checksum;
-    tud_cdc_write_char(checksum);
-    tud_cdc_write_flush();
+    if (route_cdc)
+    {
+        tud_cdc_write_char(checksum);
+        tud_cdc_write_flush();
+    }
     // On ESP32-S3 TinyUSB runs in its own background task; tud_task() must
     // NOT be called here (would assert / deadlock inside the FreeRTOS task).
 
-    if (self->tcp_write_fn_ != nullptr)
+    if (route_tcp && self->tcp_write_fn_ != nullptr)
         self->tcp_write_fn_(packet_buf, packet_len);
 }
 
@@ -456,7 +504,7 @@ void HarpCore::write_timestamp_microsecond(msg_t& msg)
     const uint32_t msg_us = ((uint32_t)(*((uint16_t*)msg.payload))) << 5;
     // Keep the whole-second part and replace only the sub-second part.
     uint64_t curr_total_s = harp_time_us_64() / 1'000'000ULL;
-    uint64_t new_harp_time_us = curr_total_s + msg_us;
+    uint64_t new_harp_time_us = curr_total_s * 1'000'000ULL + msg_us;
     set_harp_time_us_64(new_harp_time_us);
     update_next_heartbeat_from_curr_harp_time_us(harp_time_us_64());
     send_harp_reply(WRITE, msg.header.address);
@@ -477,7 +525,8 @@ void HarpCore::write_operation_ctrl(msg_t& msg)
     send_harp_reply(WRITE, msg.header.address);
     if (DUMP)
     {
-        for (uint8_t address = 0; address < CORE_REG_COUNT; ++address)
+        // Exclude transport-extension registers from standard core dump output.
+        for (uint8_t address = 0; address < TAG + 1; ++address)
         {
             send_harp_reply(READ, address);
         }
@@ -576,7 +625,7 @@ void HarpCore::write_net_server_port(msg_t& msg) {
 // Writing bit6=apply saves to NVS + connects; bit7=clear erases + disconnects
 void HarpCore::write_net_config(msg_t& msg) {
     uint8_t val = *((uint8_t*)msg.payload);
-    // Preserve status bits (read-only, set by network manager)
+    // Preserve status bits (read-only, refreshed from live network state)
     uint8_t status_bits = self->regs.R_NET_CONFIG & 0x3C; // bits [5:2]
     uint8_t enable_bits = val & 0x03;                     // bits [1:0]
     self->regs.R_NET_CONFIG = enable_bits | status_bits;

@@ -52,10 +52,6 @@ static CfgSnapshot s_cfg{};
 
 static constexpr uint8_t NET_ENABLE_WIFI = 1u << 0;
 static constexpr uint8_t NET_ENABLE_TCP = 1u << 1;
-static constexpr uint8_t NET_STATUS_CFG_VALID = 1u << 2;
-static constexpr uint8_t NET_STATUS_WIFI_UP = 1u << 3;
-static constexpr uint8_t NET_STATUS_IP_OK = 1u << 4;
-static constexpr uint8_t NET_STATUS_TCP_CONN = 1u << 5;
 
 static constexpr const char* kNvsNamespace = "harp_net";
 static constexpr const char* kNvsCfgKey = "cfg_v1";
@@ -249,23 +245,12 @@ static inline void schedule_tcp_reconnect(const char* reason)
         xTaskNotifyGive(s_task_handle);
 }
 
-static inline void set_status_bits(uint8_t bits_to_set, uint8_t bits_to_clear)
-{
-    if (s_regs == nullptr)
-        return;
-    uint8_t cfg = s_regs->R_NET_CONFIG;
-    cfg |= bits_to_set;
-    cfg &= static_cast<uint8_t>(~bits_to_clear);
-    s_regs->R_NET_CONFIG = cfg;
-}
-
 // ── Wi-Fi event handler ───────────────────────────────────────────────────────
 static void wifi_event_handler(void* arg, esp_event_base_t base,
                                int32_t id, void* data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
         ESP_LOGI(kNetMgrLogTag, "Wi-Fi connected to AP: %s", s_cfg.ssid);
-        set_status_bits(NET_STATUS_WIFI_UP, 0);
     }
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
@@ -274,7 +259,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         int fd = s_tcp_sock.exchange(-1);
         if (fd >= 0) lwip_close(fd);
         ESP_LOGW(kNetMgrLogTag, "Wi-Fi disconnected");
-        set_status_bits(0, NET_STATUS_WIFI_UP | NET_STATUS_IP_OK | NET_STATUS_TCP_CONN);
         // Attempt reconnect if we still hold a valid config
         if (s_cmd == NetCmd::APPLY && s_reconnect_enabled.load() && s_cfg.ssid[0] != '\0') {
             esp_err_t err = esp_wifi_connect();
@@ -290,7 +274,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         ip_event_got_ip_t* ev = (ip_event_got_ip_t*)data;
         ESP_LOGI(kNetMgrLogTag, "Got IP: " IPSTR, IP2STR(&ev->ip_info.ip));
         s_wifi_connected = true;
-        set_status_bits(NET_STATUS_IP_OK, 0);
         // Notify the network task to open the TCP socket
         if (s_task_handle) xTaskNotifyGive(s_task_handle);
     }
@@ -378,9 +361,7 @@ static void network_task(void* /*arg*/)
             s_tcp_sock  = fd;
             s_tcp_connected = true;
             clear_reconnect_policy();
-            set_status_bits(NET_STATUS_TCP_CONN, 0);
         } else {
-            set_status_bits(0, NET_STATUS_TCP_CONN);
             schedule_tcp_reconnect("connect failed");
         }
     }
@@ -452,14 +433,16 @@ void apply()
 
     // Ensure null-termination for safety when passing to C APIs.
     cfg_ensure_terminated(s_cfg);
+
+    // Keep the password out of register-backed RAM after it is consumed.
+    memset((void*)s_regs->R_NET_PASSWORD, 0, sizeof(s_regs->R_NET_PASSWORD));
+
     s_reconnect_enabled = true;
     clear_reconnect_policy();
 
     if (!save_cfg_to_nvs(s_cfg)) {
         ESP_LOGW(kNetMgrLogTag, "Proceeding without persisted config update");
     }
-
-    set_status_bits(NET_STATUS_CFG_VALID, NET_STATUS_WIFI_UP | NET_STATUS_IP_OK | NET_STATUS_TCP_CONN);
 
     // (Re)configure the station
     wifi_config_t wifi_cfg{};
@@ -526,7 +509,6 @@ void tcp_write(const uint8_t* data, size_t len)
         if (old_fd >= 0)
             lwip_close(old_fd);
         s_tcp_connected = false;
-        set_status_bits(0, NET_STATUS_TCP_CONN);
         schedule_tcp_reconnect("tcp_write failed");
     }
 }
@@ -556,7 +538,6 @@ int tcp_read(uint8_t* data, size_t len)
     if (old_fd >= 0)
         lwip_close(old_fd);
     s_tcp_connected = false;
-    set_status_bits(0, NET_STATUS_TCP_CONN);
     schedule_tcp_reconnect(reconnect_reason);
     return -1;
 }

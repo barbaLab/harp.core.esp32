@@ -19,6 +19,8 @@ MSG_EVENT = 0x03
 HAS_TIMESTAMP = 0x10
 
 TYPE_U8 = 0x01
+TYPE_U16 = 0x02
+TYPE_U32 = 0x04
 PORT_DEFAULT = 255
 
 
@@ -77,6 +79,24 @@ def build_write_u8(address: int, value: int) -> bytes:
     return body + bytes([_checksum(body)])
 
 
+def build_write_u16(address: int, value: int) -> bytes:
+    payload = struct.pack("<H", value)
+    raw_len = 4 + len(payload)
+    payload_type = TYPE_U16
+    header = struct.pack("BBBBB", MSG_WRITE, raw_len, address, PORT_DEFAULT, payload_type)
+    body = header + payload
+    return body + bytes([_checksum(body)])
+
+
+def build_write_u32(address: int, value: int) -> bytes:
+    payload = struct.pack("<I", value)
+    raw_len = 4 + len(payload)
+    payload_type = TYPE_U32
+    header = struct.pack("BBBBB", MSG_WRITE, raw_len, address, PORT_DEFAULT, payload_type)
+    body = header + payload
+    return body + bytes([_checksum(body)])
+
+
 class HarpReply:
     def __init__(self, msg_type, address, payload_type_raw, ts_sec, ts_usec_raw, payload, raw):
         self.msg_type = msg_type
@@ -106,6 +126,9 @@ class HarpReply:
 
     def payload_u16(self) -> int:
         return struct.unpack_from("<H", self.payload)[0]
+
+    def payload_u32(self) -> int:
+        return struct.unpack_from("<I", self.payload)[0]
 
 
 def recv_reply(sock: socket.socket, timeout: float = 2.0) -> HarpReply:
@@ -167,6 +190,14 @@ class HarpTCPConnection:
 
     def write_u8(self, address: int, value: int, timeout: float = 2.0) -> HarpReply:
         self.sock.sendall(build_write_u8(address, value))
+        return recv_reply(self.sock, timeout)
+
+    def write_u16(self, address: int, value: int, timeout: float = 2.0) -> HarpReply:
+        self.sock.sendall(build_write_u16(address, value))
+        return recv_reply(self.sock, timeout)
+
+    def write_u32(self, address: int, value: int, timeout: float = 2.0) -> HarpReply:
+        self.sock.sendall(build_write_u32(address, value))
         return recv_reply(self.sock, timeout)
 
     def drain(self, window: float = 0.2):

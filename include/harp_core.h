@@ -27,7 +27,8 @@ inline constexpr size_t PICO_CORE_VERSION_MINOR = ESP32_CORE_VERSION_MINOR;
 inline constexpr size_t PICO_CORE_VERSION_PATCH = ESP32_CORE_VERSION_PATCH;
 
 // Version of the Harp Protocol that this library most closely implements.
-inline constexpr size_t HARP_VERSION_MAJOR = 0;
+// Aligned with Harp protocol v1.0.x.
+inline constexpr size_t HARP_VERSION_MAJOR = 1;
 inline constexpr size_t HARP_VERSION_MINOR = 0;
 inline constexpr size_t HARP_VERSION_PATCH = 0;
 
@@ -79,7 +80,7 @@ public:
     void run();
 
     msg_header_t& get_buffered_msg_header()
-    {return *((msg_header_t*)(&rx_buffer_));}
+    {return *((msg_header_t*)(active_rx_buffer_));}
 
     msg_t get_buffered_msg();
 
@@ -89,7 +90,11 @@ public:
     {return new_msg_;}
 
     void clear_msg()
-    {new_msg_ = false;}
+    {
+        new_msg_ = false;
+        buffered_msg_source_ = TransportSource::None;
+        active_rx_buffer_ = nullptr;
+    }
 
     static void write_reg_generic(msg_t& msg);
     static void read_reg_generic(uint8_t reg_name);
@@ -229,6 +234,22 @@ protected:
     HarpSynchronizer* sync_;
 
 private:
+    enum class TransportSource : uint8_t
+    {
+        None,
+        Cdc,
+        Tcp,
+    };
+
+    static constexpr uint8_t NET_ENABLE_WIFI = 1u << 0;
+    static constexpr uint8_t NET_ENABLE_TCP = 1u << 1;
+    static constexpr uint8_t NET_STATUS_CFG_VALID = 1u << 2;
+    static constexpr uint8_t NET_STATUS_WIFI_UP = 1u << 3;
+    static constexpr uint8_t NET_STATUS_IP_OK = 1u << 4;
+    static constexpr uint8_t NET_STATUS_TCP_CONN = 1u << 5;
+    static constexpr uint8_t NET_STATUS_MASK =
+        NET_STATUS_CFG_VALID | NET_STATUS_WIFI_UP | NET_STATUS_IP_OK | NET_STATUS_TCP_CONN;
+
     /**
      * \brief Align the next heartbeat to the current whole-second boundary.
      * Uses the C % operator (sufficient on ESP32-S3 with hardware divider).
@@ -243,9 +264,12 @@ private:
     }
 
     Registers regs_;
-    uint8_t rx_buffer_[MAX_PACKET_SIZE];
-    uint8_t rx_buffer_index_;
-    const uint8_t& total_bytes_read_;
+    uint8_t tcp_rx_buffer_[MAX_PACKET_SIZE];
+    size_t tcp_rx_index_;
+    uint8_t cdc_rx_buffer_[MAX_PACKET_SIZE];
+    size_t cdc_rx_index_;
+    uint8_t* active_rx_buffer_;
+    TransportSource buffered_msg_source_;
     uint64_t offset_us_64_;
     bool disconnect_handled_;
     bool connect_handled_;
@@ -256,6 +280,11 @@ private:
 
     void process_cdc_input();
     void process_tcp_input();
+    void process_transport_input(uint8_t* buffer, size_t* buffer_index,
+                                 TransportSource source,
+                                 int (*read_fn)(uint8_t*, size_t),
+                                 const char* transport_name);
+    void refresh_net_config_status_bits();
     static void update_state(bool force = false,
                              op_mode_t forced_next_state = STANDBY);
     static inline void update_timestamp_regs()

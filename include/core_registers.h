@@ -5,8 +5,7 @@
 #include <core_reg_bits.h>
 #include <cstring>  // for strcpy
 
-// 18 registers for standard implementation
-// 19 - 22 claimed for network config
+// 18 standard core registers plus 5 transport-extension registers.
 static const uint8_t CORE_REG_COUNT = 23;
 
 #define APP_REG_START_ADDRESS (32)
@@ -135,7 +134,7 @@ struct Registers
      {(uint8_t*)&regs_.R_HW_VERSION_L,     sizeof(regs_.R_HW_VERSION_L),      U8},
      {(uint8_t*)&regs_.R_ASSEMBLY_VERSION, sizeof(regs_.R_ASSEMBLY_VERSION),  U8},
      {(uint8_t*)&regs_.R_HARP_VERSION_H,   sizeof(regs_.R_HARP_VERSION_H),    U8},
-     {(uint8_t*)&regs_.R_HARP_VERSION_L,   sizeof(regs_.R_HW_VERSION_L),      U8},
+        {(uint8_t*)&regs_.R_HARP_VERSION_L,   sizeof(regs_.R_HARP_VERSION_L),    U8},
      {(uint8_t*)&regs_.R_FW_VERSION_H,     sizeof(regs_.R_FW_VERSION_H),      U8},
      {(uint8_t*)&regs_.R_FW_VERSION_L,     sizeof(regs_.R_FW_VERSION_L),      U8},
      {(uint8_t*)&regs_.R_TIMESTAMP_SECOND, sizeof(regs_.R_TIMESTAMP_SECOND),  U32},
