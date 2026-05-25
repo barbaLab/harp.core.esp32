@@ -413,11 +413,13 @@ void HarpCore::write_reset_dev(msg_t& msg)
     uint8_t& write_byte = *((uint8_t*)msg.payload);
     const bool& rst_dev_bit = bool((write_byte >> RST_DEV_OFFSET) & 1u);
     const bool& reset_dfu_bit = bool((write_byte >> RST_DFU_OFFSET) & 1u);
+    // ACK first so the host can confirm command acceptance before reset paths.
+    send_harp_reply(WRITE, msg.header.address);
+
     // On ESP32-S3 there is no USB bootloader (DFU) mode equivalent to
-    // reset_usb_boot()-style flows on some MCUs. esp_restart() performs a
-    // full chip reset
-    // and re-enters the application; use it for both RST_DFU and RST_DEV
-    // when a hard reset is requested.
+    // reset_usb_boot()-style flows on some MCUs. RST_DFU is mapped to
+    // esp_restart() (full chip reset). RST_DEV keeps the app-level reset
+    // behavior through reset_app().
     if (reset_dfu_bit)
         esp_restart();
     if (rst_dev_bit)
@@ -425,8 +427,6 @@ void HarpCore::write_reset_dev(msg_t& msg)
         self->regs_.r_operation_ctrl_bits.OP_MODE = STANDBY;
         self->reset_app();
     }
-    else
-        send_harp_reply(WRITE, msg.header.address);
 }
 
 void HarpCore::write_device_name(msg_t& msg)
