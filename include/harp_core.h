@@ -17,7 +17,7 @@
 
 // Project version.
 inline constexpr size_t ESP32_CORE_VERSION_MAJOR = 0;
-inline constexpr size_t ESP32_CORE_VERSION_MINOR = 3;
+inline constexpr size_t ESP32_CORE_VERSION_MINOR = 2;
 inline constexpr size_t ESP32_CORE_VERSION_PATCH = 0;
 
 // Backward-compatible aliases for downstream projects that still reference the
@@ -27,8 +27,8 @@ inline constexpr size_t PICO_CORE_VERSION_MINOR = ESP32_CORE_VERSION_MINOR;
 inline constexpr size_t PICO_CORE_VERSION_PATCH = ESP32_CORE_VERSION_PATCH;
 
 // Version of the Harp Protocol that this library most closely implements.
-inline constexpr size_t HARP_VERSION_MAJOR = 0;
-inline constexpr size_t HARP_VERSION_MINOR = 0;
+inline constexpr size_t HARP_VERSION_MAJOR = 1;
+inline constexpr size_t HARP_VERSION_MINOR = 11;
 inline constexpr size_t HARP_VERSION_PATCH = 0;
 
 
