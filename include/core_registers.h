@@ -5,7 +5,9 @@
 #include <core_reg_bits.h>
 #include <cstring>  // for strcpy
 
-static const uint8_t CORE_REG_COUNT = 18;
+// 18 registers for standard implementation
+// 19 - 22 claimed for network config
+static const uint8_t CORE_REG_COUNT = 23;
 
 #define APP_REG_START_ADDRESS (32)
 
@@ -58,6 +60,11 @@ enum RegName : uint8_t
     TIMESTAMP_OFFSET = 15,
     UUID = 16,
     TAG = 17,
+    NET_SSID        = 18,
+    NET_PASSWORD    = 19,
+    NET_SERVER_IP = 20,  // IP(16)
+    NET_SERVER_PORT = 21,  // port(2)
+    NET_CONFIG      = 22,  // enable bits + status bits
 };
 
 
@@ -83,6 +90,16 @@ struct RegValues
     volatile uint8_t R_TIMESTAMP_OFFSET;
     uint8_t R_UUID[16];
     uint8_t R_TAG[8];
+    volatile char     R_NET_SSID[32];
+    volatile char     R_NET_PASSWORD[64];
+    volatile uint8_t  R_NET_SERVER_IP[16]; 
+    volatile uint8_t  R_NET_SERVER_PORT[2];
+    volatile uint8_t  R_NET_CONFIG;
+    // R_NET_CONFIG byte layout
+    // bits [1:0] = enable  (bit0=wifi, bit1=tcp)
+    // bits [5:2] = status  (bit2=cfg_valid, bit3=wifi_up, bit4=ip_ok, bit5=tcp_conn)
+    // bit  6     = apply   (write 1 to save+connect)
+    // bit  7     = clear   (write 1 to erase+disconnect)
 };
 #pragma pack(pop)
 
@@ -129,8 +146,13 @@ struct Registers
      {(uint8_t*)&regs_.R_SERIAL_NUMBER,    sizeof(regs_.R_SERIAL_NUMBER),     U16},
      {(uint8_t*)&regs_.R_CLOCK_CONFIG,     sizeof(regs_.R_CLOCK_CONFIG),      U8},
      {(uint8_t*)&regs_.R_TIMESTAMP_OFFSET, sizeof(regs_.R_TIMESTAMP_OFFSET),  U8},
-     {(uint8_t*)&regs_.R_UUID, sizeof(regs_.R_UUID),  U8},
-     {(uint8_t*)&regs_.R_TAG, sizeof(regs_.R_TAG),  U8},
+     {(uint8_t*)&regs_.R_UUID,             sizeof(regs_.R_UUID),  U8},
+     {(uint8_t*)&regs_.R_TAG,              sizeof(regs_.R_TAG),  U8},
+     {(uint8_t*)regs_.R_NET_SSID,          sizeof(regs_.R_NET_SSID),          U8},
+     {(uint8_t*)regs_.R_NET_PASSWORD,      sizeof(regs_.R_NET_PASSWORD),      U8},
+     {(uint8_t*)regs_.R_NET_SERVER_IP,     sizeof(regs_.R_NET_SERVER_IP),     U8},
+     {(uint8_t*)&regs_.R_NET_SERVER_PORT,  sizeof(regs_.R_NET_SERVER_PORT),   U16},
+     {(uint8_t*)&regs_.R_NET_CONFIG,       sizeof(regs_.R_NET_CONFIG),        U8},
     };
 
     // Syntactic Sugar. Make bitfields for certain registers easier to access.

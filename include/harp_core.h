@@ -181,7 +181,16 @@ public:
     {self->sync_ = sync;}
 
     static void set_visual_indicators_fn(void (*func)(bool))
-    {self->set_visual_indicators_fn_ = func;}
+    { self->set_visual_indicators_fn_ = func; }
+
+    static void set_tcp_write_fn(void (*fn)(const uint8_t*, size_t))
+    { self->tcp_write_fn_ = fn; }
+
+    static void set_net_save_and_connect_fn(void (*fn)())
+    { self->net_save_and_connect_fn_ = fn; }
+
+    static void set_net_clear_fn(void (*fn)())
+    { self->net_clear_fn_ = fn; }
 
     static void force_state(op_mode_t next_state)
     {self->update_state(true, next_state);}
@@ -214,6 +223,9 @@ protected:
 
     bool new_msg_;
     void (* set_visual_indicators_fn_)(bool);
+    void (*tcp_write_fn_)(const uint8_t*, size_t) = nullptr;
+    void (*net_save_and_connect_fn_)() = nullptr;
+    void (*net_clear_fn_)() = nullptr;
     HarpSynchronizer* sync_;
 
 private:
@@ -243,6 +255,7 @@ private:
     uint32_t disconnect_start_time_us_;
 
     void process_cdc_input();
+    void process_tcp_input();
     static void update_state(bool force = false,
                              op_mode_t forced_next_state = STANDBY);
     static inline void update_timestamp_regs()
@@ -259,6 +272,14 @@ private:
     static void write_serial_number(msg_t& msg);
     static void write_clock_config(msg_t& msg);
     static void write_timestamp_offset(msg_t& msg);
+
+    // wifi static handlers
+    static void read_net_password_masked(uint8_t reg_name); // returns zeroed bytes
+    static void write_net_ssid(msg_t& msg);
+    static void write_net_password(msg_t& msg);
+    static void write_net_server_addr(msg_t& msg);
+    static void write_net_server_port(msg_t& msg);
+    static void write_net_config(msg_t& msg);  // apply/clear trigger here
 
     RegFnPair reg_func_table_[CORE_REG_COUNT] =
     {
@@ -280,6 +301,12 @@ private:
         {&HarpCore::read_reg_generic, &HarpCore::write_timestamp_offset},
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
+        
+        {&HarpCore::read_reg_generic,       &HarpCore::write_net_ssid},
+        {&HarpCore::read_net_password_masked, &HarpCore::write_net_password},
+        {&HarpCore::read_reg_generic,       &HarpCore::write_net_server_addr},
+        {&HarpCore::read_reg_generic,       &HarpCore::write_net_server_port},
+        {&HarpCore::read_reg_generic,       &HarpCore::write_net_config},
     };
 };
 

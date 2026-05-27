@@ -32,20 +32,45 @@ In the app repo:
 * Parsing incoming Harp messages.
 * Dispatching messages to the appropriate register handlers.
 * Sending Harp-compliant timestamped replies.
+* Handling Harp messages over both TinyUSB CDC and Wi-Fi TCP.
+* Core-native Wi-Fi STA + TCP client lifecycle management (`NetworkManager`).
 * Updating Harp time from an external UART synchronization signal.
 * Running with ESP-IDF logging and PlatformIO on ESP32-S3.
 ## Current Topology
 
-This firmware uses two separate interfaces in the current board setup:
+This firmware can use two transport paths in the current board setup:
 
-* Harp protocol traffic goes over the TinyUSB CDC device interface.
+* Harp protocol traffic over TinyUSB CDC.
+* Harp protocol traffic over Wi-Fi TCP (ESP32 connects outbound to a server IP/port).
 * Firmware logs go over the ESP-IDF console path.
 
 On the current hardware this typically shows up as two COM ports in Windows. The COM numbers are assigned by Windows; the firmware only defines the functions.
+## Wi-Fi / TCP Control Path
+
+Network configuration is exposed as Harp registers and can be provisioned over USB,
+then used for runtime TCP communication:
+
+* `R_NET_SSID` (18): null-terminated SSID buffer.
+* `R_NET_PASSWORD` (19): null-terminated password buffer (reads are masked).
+* `R_NET_SERVER_IP` (20): server IPv4 string (for example `192.168.137.1`).
+* `R_NET_SERVER_PORT` (21): little-endian TCP port.
+* `R_NET_CONFIG` (22):
+	* bits `[1:0]` enable flags (`wifi`, `tcp`)
+	* bits `[5:2]` status bits (`cfg_valid`, `wifi_up`, `ip_ok`, `tcp_conn`)
+	* bit `6` apply
+	* bit `7` clear/disconnect
+
+Implementation notes:
+
+* `src/network_manager.cpp` initializes NVS, netif/event loop, Wi-Fi STA, and TCP reconnect logic.
+* Wi-Fi power save is disabled with `WIFI_PS_NONE` for better latency stability.
+* Reconnect races are handled defensively (`ESP_ERR_WIFI_CONN` is treated as non-fatal).
+* `src/harp_core.cpp` transmits replies over both CDC and TCP and parses inbound messages from both paths.
 ## Current Implementation
 
 * `examples/minimal_platformio/src/main.cpp` initializes `HarpCore`, optionally attaches `HarpSynchronizer`, and runs the Harp loop for local development/testing.
 * `src/harp_core.cpp` implements message parsing, register access, heartbeat handling, and reply generation.
+* `src/network_manager.cpp` implements Wi-Fi event handling, TCP connect/reconnect, and status propagation via `R_NET_CONFIG`.
 * `src/harp_synchronizer.cpp` listens on a UART RX pin and updates Harp time from external sync packets.
 * `src/usb_descriptors.c` defines the TinyUSB CDC descriptors used for the Harp device channel.
 ## Using This Project
@@ -53,6 +78,23 @@ On the current hardware this typically shows up as two COM ports in Windows. The
 The simplest way to work with this project is to use the dev app under `examples/minimal_platformio`, then talk to it with the Python Harp client over the Harp CDC COM port.
 
 The test scripts under `test/` are the primary examples of how to interact with the device.
+
+For end-to-end Wi-Fi/TCP validation, use `examples/minimal_platformio/test/test_harp_tcp.py`.
+The script provisions network registers over USB first, then accepts the inbound
+TCP connection from the ESP32 and runs:
+
+1. `get_info`
+2. `enable_heartbeat`
+3. `test_reply_speed`
+
+Example:
+
+```bash
+cd examples/minimal_platformio
+python test/test_harp_tcp.py --ssid <ssid> --pwd <password> --server-ip <host-ip> --server-port 9999
+```
+
+On Windows Mobile Hotspot, the host IP is typically `192.168.137.1`.
 ### Python API
 
 The installed Python package in this workspace uses the `harp` namespace.
@@ -113,6 +155,18 @@ The heartbeat test currently uses:
 
 * `alive_en(True)` to enable the heartbeat bit.
 * `get_events()` to collect heartbeat events.
+
+`test/test_harp_tcp.py` additionally reports TCP round-trip latency statistics and
+can save a histogram plot for long-run comparison (`N=10000` style tests).
+
+## Latency Tuning Notes
+
+Observed during validation:
+
+* Dedicated/local AP setup produced the best Wi-Fi tail latency in this project.
+* `WIFI_PS_NONE` reduced worst-case spikes versus default Wi-Fi power save behavior.
+* Pinning the core protocol task to CPU1 (`examples/minimal_platformio/src/main.cpp`)
+	helped reduce contention with Wi-Fi work commonly running on CPU0.
 ## References
 
 * [Harp Protocol Repo](https://github.com/harp-tech/protocol)

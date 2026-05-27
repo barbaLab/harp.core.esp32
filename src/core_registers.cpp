@@ -24,7 +24,12 @@ Registers::Registers(uint16_t who_am_i,
        .R_CLOCK_CONFIG = 0,
        .R_TIMESTAMP_OFFSET = 0,
        .R_UUID = {0},
-       .R_TAG = {0}
+       .R_TAG = {0},
+       .R_NET_SSID = {0},
+       .R_NET_PASSWORD = {0},
+       .R_NET_SERVER_IP = {0}, 
+       .R_NET_SERVER_PORT = {uint8_t(9999u & 0xFFu), uint8_t((9999u >> 8) & 0xFFu)},            // Store default TCP port (9999) as little-endian bytes.
+       .R_NET_CONFIG = 0x00
         }
 {
     strcpy((char*)regs_.R_DEVICE_NAME, name);
