@@ -31,6 +31,16 @@ private:
     HarpCApp(uint16_t who_am_i,
              uint8_t hw_version_major, uint8_t hw_version_minor,
              uint8_t assembly_version,
+             uint8_t fw_version_major, uint8_t fw_version_minor,
+             uint16_t serial_number, const char name[],
+             const uint8_t tag[],
+             void* app_reg_values, RegSpecs* app_reg_specs,
+             RegFnPair* reg_fns, size_t app_reg_count,
+             void (* update_fn)(void), void (* reset_fn)(void));
+    [[deprecated("harp_version_major/minor are ignored; protocol version is compile-time fixed")]]
+    HarpCApp(uint16_t who_am_i,
+             uint8_t hw_version_major, uint8_t hw_version_minor,
+             uint8_t assembly_version,
              uint8_t harp_version_major, uint8_t harp_version_minor,
              uint8_t fw_version_major, uint8_t fw_version_minor,
              uint16_t serial_number, const char name[],
@@ -49,6 +59,16 @@ public:
 /**
  * \brief initialize the harp core app singleton with parameters and init Tinyusb.
  */
+    static HarpCApp& init(uint16_t who_am_i,
+                          uint8_t hw_version_major, uint8_t hw_version_minor,
+                          uint8_t assembly_version,
+                          uint8_t fw_version_major, uint8_t fw_version_minor,
+                          uint16_t serial_number, const char name[],
+                          const uint8_t tag[],
+                          void* app_reg_values, RegSpecs* app_reg_specs,
+                          RegFnPair* reg_fns, size_t app_reg_count,
+                          void (* update_fn)(void), void (*reset_fn)(void));
+    [[deprecated("harp_version_major/minor are ignored; protocol version is compile-time fixed")]]
     static HarpCApp& init(uint16_t who_am_i,
                           uint8_t hw_version_major, uint8_t hw_version_minor,
                           uint8_t assembly_version,

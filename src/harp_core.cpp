@@ -25,7 +25,6 @@ void net_disconnect_from_core()
 HarpCore& HarpCore::init(uint16_t who_am_i,
                          uint8_t hw_version_major, uint8_t hw_version_minor,
                          uint8_t assembly_version,
-                         uint8_t harp_version_major, uint8_t harp_version_minor,
                          uint8_t fw_version_major, uint8_t fw_version_minor,
                          uint16_t serial_number, const char name[],
                          const uint8_t tag[])
@@ -33,23 +32,37 @@ HarpCore& HarpCore::init(uint16_t who_am_i,
     // Create the singleton instance using the private constructor.
     static HarpCore core(who_am_i, hw_version_major, hw_version_minor,
                          assembly_version,
-                         harp_version_major, harp_version_minor,
                          fw_version_major, fw_version_minor, serial_number,
                          name, tag);
     return core;
 }
 
+HarpCore& HarpCore::init(uint16_t who_am_i,
+                         uint8_t hw_version_major, uint8_t hw_version_minor,
+                         uint8_t assembly_version,
+                         uint8_t harp_version_major, uint8_t harp_version_minor,
+                         uint8_t fw_version_major, uint8_t fw_version_minor,
+                         uint16_t serial_number, const char name[],
+                         const uint8_t tag[])
+{
+    (void)harp_version_major;
+    (void)harp_version_minor;
+    return init(who_am_i,
+                hw_version_major, hw_version_minor,
+                assembly_version,
+                fw_version_major, fw_version_minor,
+                serial_number, name, tag);
+}
+
 HarpCore::HarpCore(uint16_t who_am_i,
                    uint8_t hw_version_major, uint8_t hw_version_minor,
                    uint8_t assembly_version,
-                   uint8_t harp_version_major, uint8_t harp_version_minor,
                    uint8_t fw_version_major, uint8_t fw_version_minor,
                    uint16_t serial_number, const char name[],
                    const uint8_t tag[])
 :new_msg_{false},
  set_visual_indicators_fn_{nullptr}, sync_{nullptr},
  regs_{who_am_i, hw_version_major, hw_version_minor, assembly_version,
-       harp_version_major, harp_version_minor,
        fw_version_major, fw_version_minor, serial_number, name, tag},
  tcp_rx_index_{0},
  cdc_rx_index_{0},
@@ -74,17 +87,6 @@ HarpCore::HarpCore(uint16_t who_am_i,
     tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
     ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
     ESP_LOGD(kHarpCoreLogTag, "tinyusb_driver_install done");
-    // Map extension register specs in vendor/app space.
-    core_extension_specs_[0] = RegSpecs{reinterpret_cast<volatile uint8_t*>(regs.R_NET_SSID),
-                                        sizeof(regs.R_NET_SSID), U8};
-    core_extension_specs_[1] = RegSpecs{reinterpret_cast<volatile uint8_t*>(regs.R_NET_PASSWORD),
-                                        sizeof(regs.R_NET_PASSWORD), U8};
-    core_extension_specs_[2] = RegSpecs{reinterpret_cast<volatile uint8_t*>(regs.R_NET_SERVER_IP),
-                                        sizeof(regs.R_NET_SERVER_IP), U8};
-    core_extension_specs_[3] = RegSpecs{reinterpret_cast<volatile uint8_t*>(&regs.R_NET_SERVER_PORT),
-                                        sizeof(regs.R_NET_SERVER_PORT), U16};
-    core_extension_specs_[4] = RegSpecs{reinterpret_cast<volatile uint8_t*>(&regs.R_NET_CONFIG),
-                                        sizeof(regs.R_NET_CONFIG), U8};
 
     // Populate Harp Core R_UID with serial low bytes and ESP32 base MAC.
     regs.R_UID[0] = static_cast<uint8_t>(regs.R_SERIAL_NUMBER & 0xFFu);
@@ -94,14 +96,16 @@ HarpCore::HarpCore(uint16_t who_am_i,
     memcpy((void*)(&regs.R_UID[8]), mac, sizeof(mac));
 
     // Populate R_VERSION (protocol, firmware, hardware, core ID, hash=0).
-    regs.R_VERSION[0] = regs.R_CORE_VERSION_H;
-    regs.R_VERSION[1] = regs.R_CORE_VERSION_L;
-    regs.R_VERSION[2] = static_cast<uint8_t>(HARP_VERSION_PATCH);
-    regs.R_VERSION[3] = regs.R_FW_VERSION_H;
-    regs.R_VERSION[4] = regs.R_FW_VERSION_L;
-    regs.R_VERSION[5] = static_cast<uint8_t>(ESP32_CORE_VERSION_PATCH);
-    regs.R_VERSION[6] = regs.R_HW_VERSION_H;
-    regs.R_VERSION[7] = regs.R_HW_VERSION_L;
+    // Keep this independent from deprecated legacy version registers so they
+    // can be removed without changing R_VERSION population logic.
+    regs.R_VERSION[0] = HARP_PROTOCOL_VERSION_MAJOR;
+    regs.R_VERSION[1] = HARP_PROTOCOL_VERSION_MINOR;
+    regs.R_VERSION[2] = HARP_PROTOCOL_VERSION_PATCH;
+    regs.R_VERSION[3] = fw_version_major;
+    regs.R_VERSION[4] = fw_version_minor;
+    regs.R_VERSION[5] = 0;
+    regs.R_VERSION[6] = hw_version_major;
+    regs.R_VERSION[7] = hw_version_minor;
     regs.R_VERSION[8] = 0;
     regs.R_VERSION[9] = 'E';
     regs.R_VERSION[10] = '3';
@@ -109,6 +113,23 @@ HarpCore::HarpCore(uint16_t who_am_i,
 
     // Initialize next heartbeat.
     update_next_heartbeat_from_curr_harp_time_us(harp_time_us_64());
+}
+
+HarpCore::HarpCore(uint16_t who_am_i,
+                   uint8_t hw_version_major, uint8_t hw_version_minor,
+                   uint8_t assembly_version,
+                   uint8_t harp_version_major, uint8_t harp_version_minor,
+                   uint8_t fw_version_major, uint8_t fw_version_minor,
+                   uint16_t serial_number, const char name[],
+                   const uint8_t tag[])
+    : HarpCore(who_am_i,
+               hw_version_major, hw_version_minor,
+               assembly_version,
+               fw_version_major, fw_version_minor,
+               serial_number, name, tag)
+{
+    (void)harp_version_major;
+    (void)harp_version_minor;
 }
 
 HarpCore::~HarpCore(){self = nullptr;}
@@ -413,7 +434,7 @@ const RegSpecs& HarpCore::reg_address_to_specs(uint8_t address)
     if (address < CORE_REG_COUNT)
         return self->regs_.address_to_specs[address];
     if (is_core_extension_address(address))
-        return self->core_extension_specs_[core_extension_address_to_index(address)];
+        return self->regs_.core_extension_address_to_specs[core_extension_address_to_index(address)];
     return self->address_to_app_reg_specs(address);
 }
 

@@ -57,7 +57,6 @@ extern "C" void app_main(void)
         kWhoAmI,
         kHwVersionMajor, kHwVersionMinor,
         kAssemblyVersion,
-        HARP_VERSION_MAJOR, HARP_VERSION_MINOR,
         kFwVersionMajor, kFwVersionMinor,
         kSerialNumber,
         kDeviceName,

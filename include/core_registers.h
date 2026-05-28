@@ -8,6 +8,11 @@
 // Latest protocol core register block: addresses 0-19.
 static const uint8_t CORE_REG_COUNT = 20;
 
+// Harp protocol version implemented by this core.
+inline constexpr uint8_t HARP_PROTOCOL_VERSION_MAJOR = 1;
+inline constexpr uint8_t HARP_PROTOCOL_VERSION_MINOR = 13;
+inline constexpr uint8_t HARP_PROTOCOL_VERSION_PATCH = 0;
+
 // Core transport extensions are mapped into vendor/app space.
 static const uint8_t CORE_EXTENSION_START_ADDRESS = 32;
 static const uint8_t CORE_EXTENSION_REG_COUNT = 5;
@@ -32,33 +37,33 @@ enum op_mode_t: uint8_t
  */
 enum RegName : uint8_t
 {
-    WHO_AM_I = 0,
-    HW_VERSION_H = 1, // major hardware version
-    HW_VERSION_L = 2, // minor hardware version
-    ASSEMBLY_VERSION = 3,
-    CORE_VERSION_H = 4,
-    CORE_VERSION_L = 5,
-    FW_VERSION_H = 6,
-    FW_VERSION_L = 7,
-    TIMESTAMP_SECOND = 8,
-    TIMESTAMP_MICRO = 9,
-    OPERATION_CTRL = 10,
-    RESET_DEV = 11,
-    DEVICE_NAME = 12,
-    SERIAL_NUMBER = 13,
-    CLOCK_CONFIG = 14,
-    TIMESTAMP_OFFSET = 15,
-    UID = 16,
-    TAG = 17,
-    HEARTBEAT = 18,
-    VERSION = 19,
+    WHO_AM_I = 0,          // required
+    HW_VERSION_H = 1,      // deprecated
+    HW_VERSION_L = 2,      // deprecated
+    ASSEMBLY_VERSION = 3,  // deprecated
+    CORE_VERSION_H = 4,    // deprecated
+    CORE_VERSION_L = 5,    // deprecated
+    FW_VERSION_H = 6,      // deprecated
+    FW_VERSION_L = 7,      // deprecated
+    TIMESTAMP_SECOND = 8,  // required
+    TIMESTAMP_MICRO = 9,   // required
+    OPERATION_CTRL = 10,   // required
+    RESET_DEV = 11,        // optional
+    DEVICE_NAME = 12,      // optional
+    SERIAL_NUMBER = 13,    // deprecated
+    CLOCK_CONFIG = 14,     // optional
+    TIMESTAMP_OFFSET = 15, // deprecated
+    UID = 16,              // optional
+    TAG = 17,              // optional
+    HEARTBEAT = 18,        // required
+    VERSION = 19,          // required
 
     // Core transport extension registers (vendor/app space).
     NET_SSID = CORE_EXTENSION_START_ADDRESS,
     NET_PASSWORD,
-    NET_SERVER_IP,  // IP(16)
-    NET_SERVER_PORT,  // port(2)
-    NET_CONFIG,  // enable bits + status bits
+    NET_SERVER_IP,         // IP(16)
+    NET_SERVER_PORT,       // port(2)
+    NET_CONFIG,            // enable bits + status bits
 };
 
 
@@ -116,10 +121,17 @@ struct Registers
         Registers(uint16_t who_am_i,
                   uint8_t hw_version_major, uint8_t hw_version_minor,
                   uint8_t assembly_version,
-                  uint8_t harp_version_major, uint8_t harp_version_minor,
                   uint8_t fw_version_major, uint8_t fw_version_minor,
                   uint16_t serial_number, const char name[],
                   const uint8_t tag[]);
+        [[deprecated("harp_version_major/minor are ignored; protocol version is compile-time fixed")]]
+        Registers(uint16_t who_am_i,
+              uint8_t hw_version_major, uint8_t hw_version_minor,
+              uint8_t assembly_version,
+              uint8_t harp_version_major, uint8_t harp_version_minor,
+              uint8_t fw_version_major, uint8_t fw_version_minor,
+              uint16_t serial_number, const char name[],
+              const uint8_t tag[]);
         ~Registers();
 
     RegValues regs_;
@@ -148,6 +160,15 @@ struct Registers
      {(uint8_t*)&regs_.R_TAG,              sizeof(regs_.R_TAG),               U8},
      {(uint8_t*)&regs_.R_HEARTBEAT,        sizeof(regs_.R_HEARTBEAT),        U16},
      {(uint8_t*)&regs_.R_VERSION,          sizeof(regs_.R_VERSION),           U8},
+    };
+
+    // Core transport extension lookup table for NET registers(vendor/app space).
+    const RegSpecs core_extension_address_to_specs[CORE_EXTENSION_REG_COUNT] =
+    {{(uint8_t*)&regs_.R_NET_SSID,         sizeof(regs_.R_NET_SSID),         U8},
+     {(uint8_t*)&regs_.R_NET_PASSWORD,     sizeof(regs_.R_NET_PASSWORD),     U8},
+     {(uint8_t*)&regs_.R_NET_SERVER_IP,    sizeof(regs_.R_NET_SERVER_IP),    U8},
+     {(uint8_t*)&regs_.R_NET_SERVER_PORT,  sizeof(regs_.R_NET_SERVER_PORT), U16},
+     {(uint8_t*)&regs_.R_NET_CONFIG,       sizeof(regs_.R_NET_CONFIG),       U8},
     };
 
 };

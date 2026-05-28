@@ -50,6 +50,8 @@ On the current hardware this typically shows up as two COM ports in Windows. The
 Network configuration is exposed as Harp registers and can be provisioned over USB,
 then used for runtime TCP communication:
 
+Detailed register specification: [docs/core-network-register-extension.md](docs/core-network-register-extension.md)
+
 * `R_NET_SSID` (32): null-terminated SSID buffer.
 * `R_NET_PASSWORD` (33): null-terminated password buffer (reads are masked).
 * `R_NET_SERVER_IP` (34): server IPv4 string (for example `192.168.137.1`).
@@ -130,15 +132,14 @@ The monitor should show the startup logs emitted from `examples/minimal_platform
 
 ### Bumping the Version
 
-Two version groups are tracked in the code:
+Version fields are tracked in the code as follows:
 
-* `HARP_VERSION_MAJOR`, `HARP_VERSION_MINOR`, `HARP_VERSION_PATCH`
+* `HARP_PROTOCOL_VERSION_MAJOR`, `HARP_PROTOCOL_VERSION_MINOR`, `HARP_PROTOCOL_VERSION_PATCH`
 	* Tracks the Harp protocol version that this implementation most closely follows.
 	* Bump this when the protocol behavior changes.
 
-* `ESP32_CORE_VERSION_MAJOR`, `ESP32_CORE_VERSION_MINOR`, `ESP32_CORE_VERSION_PATCH`
-	* Tracks this project's own implementation version.
-	* Bump this when the firmware behavior or API changes.
+* Firmware/hardware version bytes in `R_VERSION` are provided at runtime from app-specific init parameters.
+	* Bump these from the application integration when firmware or hardware versions change.
 ### Debugging
 
 The firmware uses ESP-IDF logging. `examples/minimal_platformio/src/main.cpp` emits startup logs, and `src/harp_core.cpp` contains additional debug traces around message receive and transmit paths.

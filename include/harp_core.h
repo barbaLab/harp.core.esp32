@@ -11,23 +11,9 @@
 // ESP32-S3 includes.
 // esp_timer.h provides esp_timer_get_time(), the 64-bit microsecond timebase.
 // esp_mac.h / esp_efuse.h are used in harp_core.cpp to populate R_UID.
-// esp_mac.h / esp_efuse.h are used in harp_core.cpp to populate R_UID.
 #include <esp_timer.h>
 #include <esp_mac.h>
 #include <esp_efuse.h>
-
-// Project version.
-inline constexpr size_t ESP32_CORE_VERSION_MAJOR = 0;
-inline constexpr size_t ESP32_CORE_VERSION_MINOR = 3;
-inline constexpr size_t ESP32_CORE_VERSION_PATCH = 0;
-
-// Version of the Harp Protocol that this library most closely implements.
-// Aligned with Harp protocol v1.15.x.
-inline constexpr size_t HARP_VERSION_MAJOR = 1;
-inline constexpr size_t HARP_VERSION_MINOR = 15;
-inline constexpr size_t HARP_VERSION_PATCH = 0;
-
-
 
 #define NO_PC_INTERVAL_US (3'000'000UL)
 #define HEARTBEAT_ACTIVE_INTERVAL_US (1'000'000UL)
@@ -49,6 +35,13 @@ protected:
     HarpCore(uint16_t who_am_i,
              uint8_t hw_version_major, uint8_t hw_version_minor,
              uint8_t assembly_version,
+             uint8_t fw_version_major, uint8_t fw_version_minor,
+             uint16_t serial_number, const char name[],
+             const uint8_t tag[]);
+    [[deprecated("harp_version_major/minor are ignored; protocol version is compile-time fixed")]]
+    HarpCore(uint16_t who_am_i,
+             uint8_t hw_version_major, uint8_t hw_version_minor,
+             uint8_t assembly_version,
              uint8_t harp_version_major, uint8_t harp_version_minor,
              uint8_t fw_version_major, uint8_t fw_version_minor,
              uint16_t serial_number, const char name[],
@@ -61,6 +54,13 @@ public:
     HarpCore(HarpCore& other) = delete;
     void operator=(const HarpCore& other) = delete;
 
+    static HarpCore& init(uint16_t who_am_i,
+                          uint8_t hw_version_major, uint8_t hw_version_minor,
+                          uint8_t assembly_version,
+                          uint8_t fw_version_major, uint8_t fw_version_minor,
+                          uint16_t serial_number, const char name[],
+                          const uint8_t tag[]);
+    [[deprecated("harp_version_major/minor are ignored; protocol version is compile-time fixed")]]
     static HarpCore& init(uint16_t who_am_i,
                           uint8_t hw_version_major, uint8_t hw_version_minor,
                           uint8_t assembly_version,
@@ -241,14 +241,6 @@ private:
         Tcp,
     };
 
-    static constexpr uint8_t NET_ENABLE_WIFI = NET_CFG_ENABLE_WIFI_MASK;
-    static constexpr uint8_t NET_ENABLE_TCP = NET_CFG_ENABLE_TCP_MASK;
-    static constexpr uint8_t NET_STATUS_CFG_VALID = NET_CFG_STATUS_CFG_VALID_MASK;
-    static constexpr uint8_t NET_STATUS_WIFI_UP = NET_CFG_STATUS_WIFI_UP_MASK;
-    static constexpr uint8_t NET_STATUS_IP_OK = NET_CFG_STATUS_IP_OK_MASK;
-    static constexpr uint8_t NET_STATUS_TCP_CONN = NET_CFG_STATUS_TCP_CONN_MASK;
-    static constexpr uint8_t NET_STATUS_MASK = NET_CFG_STATUS_MASK;
-
     /**
      * \brief Align the next heartbeat to the current whole-second boundary.
      * Uses the C % operator (sufficient on ESP32-S3 with hardware divider).
@@ -263,7 +255,6 @@ private:
     }
 
     Registers regs_;
-    RegSpecs core_extension_specs_[CORE_EXTENSION_REG_COUNT_LOCAL];
     uint8_t tcp_rx_buffer_[MAX_PACKET_SIZE];
     size_t tcp_rx_index_;
     uint8_t cdc_rx_buffer_[MAX_PACKET_SIZE];
