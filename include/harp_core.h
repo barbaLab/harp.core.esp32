@@ -10,7 +10,8 @@
 
 // ESP32-S3 includes.
 // esp_timer.h provides esp_timer_get_time(), the 64-bit microsecond timebase.
-// esp_mac.h / esp_efuse.h are used in harp_core.cpp to populate R_UUID.
+// esp_mac.h / esp_efuse.h are used in harp_core.cpp to populate R_UID.
+// esp_mac.h / esp_efuse.h are used in harp_core.cpp to populate R_UID.
 #include <esp_timer.h>
 #include <esp_mac.h>
 #include <esp_efuse.h>
@@ -20,16 +21,10 @@ inline constexpr size_t ESP32_CORE_VERSION_MAJOR = 0;
 inline constexpr size_t ESP32_CORE_VERSION_MINOR = 3;
 inline constexpr size_t ESP32_CORE_VERSION_PATCH = 0;
 
-// Backward-compatible aliases for downstream projects that still reference the
-// old symbol names.
-inline constexpr size_t PICO_CORE_VERSION_MAJOR = ESP32_CORE_VERSION_MAJOR;
-inline constexpr size_t PICO_CORE_VERSION_MINOR = ESP32_CORE_VERSION_MINOR;
-inline constexpr size_t PICO_CORE_VERSION_PATCH = ESP32_CORE_VERSION_PATCH;
-
 // Version of the Harp Protocol that this library most closely implements.
-// Aligned with Harp protocol v1.0.x.
+// Aligned with Harp protocol v1.15.x.
 inline constexpr size_t HARP_VERSION_MAJOR = 1;
-inline constexpr size_t HARP_VERSION_MINOR = 0;
+inline constexpr size_t HARP_VERSION_MINOR = 15;
 inline constexpr size_t HARP_VERSION_PATCH = 0;
 
 
@@ -134,7 +129,7 @@ public:
     }
 
     static inline bool is_muted()
-    {return bool((self->regs.R_OPERATION_CTRL >> MUTE_RPL_OFFSET) & 0x01);}
+    {return (self->regs.R_OPERATION_CTRL & OP_CTRL_MUTE_RPL_MASK) != 0;}
 
     static inline bool is_synced()
     {
@@ -201,12 +196,14 @@ public:
     {self->update_state(true, next_state);}
 
     static inline op_mode_t get_op_mode()
-    {return op_mode_t(self->regs_.r_operation_ctrl_bits.OP_MODE);}
-
-    static void set_uuid(uint8_t* uuid, size_t num_bytes, size_t offset = 0)
     {
-        memset(self->regs.R_UUID, 0, sizeof(self->regs.R_UUID));
-        memcpy((void*)(&self->regs.R_UUID[offset]), (void*)uuid, num_bytes);
+        return op_mode_t(self->regs.R_OPERATION_CTRL & OP_CTRL_OP_MODE_MASK);
+    }
+
+    static void set_uid(uint8_t* uid, size_t num_bytes, size_t offset = 0)
+    {
+        memset(self->regs.R_UID, 0, sizeof(self->regs.R_UID));
+        memcpy((void*)(&self->regs.R_UID[offset]), (void*)uid, num_bytes);
     }
 
     static const RegSpecs& reg_address_to_specs(uint8_t address);
@@ -234,6 +231,9 @@ protected:
     HarpSynchronizer* sync_;
 
 private:
+    static constexpr uint8_t CORE_EXTENSION_REG_START = CORE_EXTENSION_START_ADDRESS;
+    static constexpr uint8_t CORE_EXTENSION_REG_COUNT_LOCAL = CORE_EXTENSION_REG_COUNT;
+
     enum class TransportSource : uint8_t
     {
         None,
@@ -241,14 +241,13 @@ private:
         Tcp,
     };
 
-    static constexpr uint8_t NET_ENABLE_WIFI = 1u << 0;
-    static constexpr uint8_t NET_ENABLE_TCP = 1u << 1;
-    static constexpr uint8_t NET_STATUS_CFG_VALID = 1u << 2;
-    static constexpr uint8_t NET_STATUS_WIFI_UP = 1u << 3;
-    static constexpr uint8_t NET_STATUS_IP_OK = 1u << 4;
-    static constexpr uint8_t NET_STATUS_TCP_CONN = 1u << 5;
-    static constexpr uint8_t NET_STATUS_MASK =
-        NET_STATUS_CFG_VALID | NET_STATUS_WIFI_UP | NET_STATUS_IP_OK | NET_STATUS_TCP_CONN;
+    static constexpr uint8_t NET_ENABLE_WIFI = NET_CFG_ENABLE_WIFI_MASK;
+    static constexpr uint8_t NET_ENABLE_TCP = NET_CFG_ENABLE_TCP_MASK;
+    static constexpr uint8_t NET_STATUS_CFG_VALID = NET_CFG_STATUS_CFG_VALID_MASK;
+    static constexpr uint8_t NET_STATUS_WIFI_UP = NET_CFG_STATUS_WIFI_UP_MASK;
+    static constexpr uint8_t NET_STATUS_IP_OK = NET_CFG_STATUS_IP_OK_MASK;
+    static constexpr uint8_t NET_STATUS_TCP_CONN = NET_CFG_STATUS_TCP_CONN_MASK;
+    static constexpr uint8_t NET_STATUS_MASK = NET_CFG_STATUS_MASK;
 
     /**
      * \brief Align the next heartbeat to the current whole-second boundary.
@@ -264,6 +263,7 @@ private:
     }
 
     Registers regs_;
+    RegSpecs core_extension_specs_[CORE_EXTENSION_REG_COUNT_LOCAL];
     uint8_t tcp_rx_buffer_[MAX_PACKET_SIZE];
     size_t tcp_rx_index_;
     uint8_t cdc_rx_buffer_[MAX_PACKET_SIZE];
@@ -284,6 +284,18 @@ private:
                                  TransportSource source,
                                  int (*read_fn)(uint8_t*, size_t),
                                  const char* transport_name);
+    static inline bool is_core_extension_address(uint8_t address)
+    {
+        return address >= CORE_EXTENSION_REG_START
+            && address < (CORE_EXTENSION_REG_START + CORE_EXTENSION_REG_COUNT_LOCAL);
+    }
+
+    static inline uint8_t core_extension_address_to_index(uint8_t address)
+    {
+        return static_cast<uint8_t>(address - CORE_EXTENSION_REG_START);
+    }
+
+    void refresh_heartbeat_register();
     void refresh_net_config_status_bits();
     static void update_state(bool force = false,
                              op_mode_t forced_next_state = STANDBY);
@@ -293,8 +305,8 @@ private:
 
     static void read_timestamp_second(uint8_t reg_name);
     static void read_timestamp_microsecond(uint8_t reg_name);
+    static void read_reset_dev(uint8_t reg_name);
     static void write_timestamp_second(msg_t& msg);
-    static void write_timestamp_microsecond(msg_t& msg);
     static void write_operation_ctrl(msg_t& msg);
     static void write_reset_dev(msg_t& msg);
     static void write_device_name(msg_t& msg);
@@ -310,6 +322,15 @@ private:
     static void write_net_server_port(msg_t& msg);
     static void write_net_config(msg_t& msg);  // apply/clear trigger here
 
+    RegFnPair core_extension_reg_func_table_[CORE_EXTENSION_REG_COUNT_LOCAL] =
+    {
+        {&HarpCore::read_reg_generic, &HarpCore::write_net_ssid},
+        {&HarpCore::read_net_password_masked, &HarpCore::write_net_password},
+        {&HarpCore::read_reg_generic, &HarpCore::write_net_server_addr},
+        {&HarpCore::read_reg_generic, &HarpCore::write_net_server_port},
+        {&HarpCore::read_reg_generic, &HarpCore::write_net_config},
+    };
+
     RegFnPair reg_func_table_[CORE_REG_COUNT] =
     {
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
@@ -321,21 +342,17 @@ private:
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
         {&HarpCore::read_timestamp_second, &HarpCore::write_timestamp_second},
-        {&HarpCore::read_timestamp_microsecond, &HarpCore::write_timestamp_microsecond},
+        {&HarpCore::read_timestamp_microsecond, &HarpCore::write_to_read_only_reg_error},
         {&HarpCore::read_reg_generic, &HarpCore::write_operation_ctrl},
-        {&HarpCore::read_reg_generic, &HarpCore::write_reset_dev},
+        {&HarpCore::read_reset_dev, &HarpCore::write_reset_dev},
         {&HarpCore::read_reg_generic, &HarpCore::write_device_name},
         {&HarpCore::read_reg_generic, &HarpCore::write_serial_number},
         {&HarpCore::read_reg_generic, &HarpCore::write_clock_config},
         {&HarpCore::read_reg_generic, &HarpCore::write_timestamp_offset},
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
         {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
-        
-        {&HarpCore::read_reg_generic,       &HarpCore::write_net_ssid},
-        {&HarpCore::read_net_password_masked, &HarpCore::write_net_password},
-        {&HarpCore::read_reg_generic,       &HarpCore::write_net_server_addr},
-        {&HarpCore::read_reg_generic,       &HarpCore::write_net_server_port},
-        {&HarpCore::read_reg_generic,       &HarpCore::write_net_config},
+        {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
+        {&HarpCore::read_reg_generic, &HarpCore::write_to_read_only_reg_error},
     };
 };
 

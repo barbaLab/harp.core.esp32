@@ -8,7 +8,7 @@ NetworkManager is responsible for:
 
 1. Wi-Fi station lifecycle (connect, disconnect, reconnect requests).
 2. TCP client lifecycle to the configured server endpoint.
-3. Network status propagation via R_NET_CONFIG status bits.
+3. Exposing connection state for HarpCore-driven R_NET_CONFIG status synthesis.
 4. Retry scheduling and backoff for TCP reconnection.
 
 ## 2. High-Level Runtime Flow
@@ -34,17 +34,16 @@ Primary triggers that wake or influence the task:
 
 1. IP_EVENT_STA_GOT_IP:
 - Marks Wi-Fi connected.
-- Sets IP status bit.
 - Notifies the network task to attempt TCP connection.
 
 2. WIFI_EVENT_STA_DISCONNECTED:
 - Marks Wi-Fi and TCP disconnected.
 - Closes socket.
-- Clears Wi-Fi/IP/TCP status bits.
 - If command is APPLY and reconnect is enabled, requests Wi-Fi reconnect.
 
 3. TCP read/write failure paths:
 - Close socket and clear TCP status bit.
+- Close socket.
 - Schedule delayed reconnect using backoff policy.
 - Notify network task.
 
@@ -80,7 +79,7 @@ This allows low CPU usage while still supporting timer-based retries.
 
 ## 7. Status Bits and Meaning
 
-R_NET_CONFIG status bits [5:2]:
+R_NET_CONFIG status bits [5:2] (computed in HarpCore from live state):
 
 1. cfg_valid (bit 2): config snapshot accepted for apply path.
 2. wifi_up (bit 3): STA associated with AP.
@@ -90,7 +89,7 @@ R_NET_CONFIG status bits [5:2]:
 Operational notes:
 
 1. tcp_conn reflects socket state and clears on peer close/read/write errors.
-2. wifi_up/ip_ok clear when Wi-Fi disconnect event is received.
+2. wifi_up/ip_ok clear when Wi-Fi disconnect state is observed.
 
 ## 8. Safety and Concurrency Notes
 
@@ -129,11 +128,10 @@ If reconnect loops too quickly:
 
 ## 11. Suggested Next Enhancements
 
-1. Persistence of network config to NVS with boot-time restore.
-2. Structured logging fields for reason and attempt number.
-3. Optional jitter for multi-device deployments.
-4. Host-visible reconnect counters/last-error reason register.
-5. Test matrix for server-close, AP-flap, and endpoint-unreachable scenarios.
+1. Structured logging fields for reason and attempt number.
+2. Optional jitter for multi-device deployments.
+3. Host-visible reconnect counters/last-error reason register.
+4. Test matrix for server-close, AP-flap, and endpoint-unreachable scenarios.
 
 ## 12. Sequence Diagram
 

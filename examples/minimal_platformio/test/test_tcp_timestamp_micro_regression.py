@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for TIMESTAMP_MICRO write reconstruction."""
+"""Regression test for TIMESTAMP_MICRO read-only behavior."""
 
 import tcp_test_config as cfg
 from harp_tcp_test_utils import (
@@ -39,8 +39,8 @@ def run_test() -> dict:
             raise AssertionError("Failed to write TIMESTAMP_SECOND")
 
         write_micro = client.write_u16(REG_TIMESTAMP_MICRO, set_micro_raw)
-        if write_micro.is_error:
-            raise AssertionError("Failed to write TIMESTAMP_MICRO")
+        if not write_micro.is_error:
+            raise AssertionError("TIMESTAMP_MICRO write should return WRITE_ERROR (read-only)")
 
         read_sec = client.read_reg(REG_TIMESTAMP_SECOND)
         if read_sec.is_error:
@@ -54,7 +54,7 @@ def run_test() -> dict:
 
     if after_seconds < 1_000_000_000:
         raise AssertionError(
-            f"TIMESTAMP_SECOND collapsed unexpectedly after TIMESTAMP_MICRO write: {after_seconds}"
+            f"TIMESTAMP_SECOND collapsed unexpectedly after rejected TIMESTAMP_MICRO write: {after_seconds}"
         )
 
     if not (0 <= after_micro_raw <= 31_249):
@@ -66,7 +66,7 @@ def run_test() -> dict:
         "set_micro_raw": set_micro_raw,
         "after_micro_raw": after_micro_raw,
     }
-    print("Timestamp micro reconstruction regression test PASS")
+    print("Timestamp micro read-only regression test PASS")
     print(result)
     return result
 

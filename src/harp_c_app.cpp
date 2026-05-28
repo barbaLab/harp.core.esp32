@@ -56,6 +56,26 @@ void HarpCApp::handle_buffered_app_message()
         msg.header.address >= (APP_REG_START_ADDRESS + reg_count_))
         return;
     uint8_t app_reg_address = msg.header.address - APP_REG_START_ADDRESS;
+
+    const RegSpecs& specs = reg_specs_[app_reg_address];
+    const uint8_t request_payload_type = static_cast<uint8_t>(msg.header.payload_type);
+    const uint8_t expected_payload_type = static_cast<uint8_t>(specs.payload_type);
+    if (request_payload_type != expected_payload_type)
+    {
+        if (msg.header.type == READ)
+            send_harp_reply(READ_ERROR, msg.header.address);
+        else if (msg.header.type == WRITE)
+            send_harp_reply(WRITE_ERROR, msg.header.address);
+        clear_msg();
+        return;
+    }
+    if ((msg.header.type == WRITE) && (msg.payload_length() != specs.num_bytes))
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        clear_msg();
+        return;
+    }
+
     switch (msg.header.type)
     {
         // Note: handler functions take the full address, but they live in

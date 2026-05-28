@@ -46,12 +46,9 @@ struct CfgSnapshot {
     char     password[64];
     char     server_ip[16];
     uint16_t server_port;
-    uint8_t  enable;
+    uint8_t  net_enable_bits;
 };
 static CfgSnapshot s_cfg{};
-
-static constexpr uint8_t NET_ENABLE_WIFI = 1u << 0;
-static constexpr uint8_t NET_ENABLE_TCP = 1u << 1;
 
 static constexpr const char* kNvsNamespace = "harp_net";
 static constexpr const char* kNvsCfgKey = "cfg_v1";
@@ -82,7 +79,7 @@ static inline void apply_cfg_to_regs(const CfgSnapshot& cfg)
     memcpy((void*)s_regs->R_NET_SERVER_IP, cfg.server_ip, sizeof(cfg.server_ip));
     s_regs->R_NET_SERVER_PORT[0] = static_cast<uint8_t>(cfg.server_port & 0xFFu);
     s_regs->R_NET_SERVER_PORT[1] = static_cast<uint8_t>((cfg.server_port >> 8) & 0xFFu);
-    s_regs->R_NET_CONFIG = static_cast<uint8_t>(cfg.enable & (NET_ENABLE_WIFI | NET_ENABLE_TCP));
+    s_regs->R_NET_CONFIG = static_cast<uint8_t>(cfg.net_enable_bits & NET_CFG_ENABLE_MASK);
 }
 
 static bool save_cfg_to_nvs(const CfgSnapshot& cfg)
@@ -222,7 +219,7 @@ static inline void schedule_tcp_reconnect(const char* reason)
 {
     if (!s_reconnect_enabled.load())
         return;
-    if (!(s_cfg.enable & NET_ENABLE_TCP))
+    if (!(s_cfg.net_enable_bits & NET_CFG_ENABLE_TCP_MASK))
         return;
     if (!s_wifi_connected.load())
         return;
@@ -344,7 +341,7 @@ static void network_task(void* /*arg*/)
 
         // APPLY: Wi-Fi is already up (IP_EVENT triggered this), try TCP
         if (!s_wifi_connected || s_cfg.server_ip[0] == '\0') continue;
-        if (!(s_cfg.enable & NET_ENABLE_TCP)) continue;
+        if (!(s_cfg.net_enable_bits & NET_CFG_ENABLE_TCP_MASK)) continue;
         if (s_reconnect_pending.load()) {
             int64_t now_us = esp_timer_get_time();
             if (now_us < s_next_reconnect_us.load())
@@ -402,7 +399,7 @@ void init(RegValues* regs)
     if (load_cfg_from_nvs(&restored)) {
         apply_cfg_to_regs(restored);
         ESP_LOGI(kNetMgrLogTag, "Restored network config from NVS");
-        if (restored.enable & NET_ENABLE_WIFI) {
+        if (restored.net_enable_bits & NET_CFG_ENABLE_WIFI_MASK) {
             ESP_LOGI(kNetMgrLogTag, "Auto-applying restored network config");
             apply();
         }
@@ -416,7 +413,7 @@ void apply()
         return;
     }
 
-    if (!(s_regs->R_NET_CONFIG & NET_ENABLE_WIFI)) {
+    if (!(s_regs->R_NET_CONFIG & NET_CFG_ENABLE_WIFI_MASK)) {
         s_reconnect_enabled = false;
         clear_reconnect_policy();
         ESP_LOGI(kNetMgrLogTag, "Wi-Fi not enabled; skipping");
@@ -429,7 +426,7 @@ void apply()
     memcpy(s_cfg.server_ip, (const void*)s_regs->R_NET_SERVER_IP,  sizeof(s_cfg.server_ip));
     s_cfg.server_port = static_cast<uint16_t>(s_regs->R_NET_SERVER_PORT[0]) |
                         (static_cast<uint16_t>(s_regs->R_NET_SERVER_PORT[1]) << 8);
-    s_cfg.enable = s_regs->R_NET_CONFIG;
+    s_cfg.net_enable_bits = static_cast<uint8_t>(s_regs->R_NET_CONFIG & NET_CFG_ENABLE_MASK);
 
     // Ensure null-termination for safety when passing to C APIs.
     cfg_ensure_terminated(s_cfg);

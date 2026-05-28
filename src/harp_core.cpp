@@ -74,10 +74,39 @@ HarpCore::HarpCore(uint16_t who_am_i,
     tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
     ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
     ESP_LOGD(kHarpCoreLogTag, "tinyusb_driver_install done");
-    // Populate Harp Core R_UUID with the ESP32 base MAC address (6 bytes).
+    // Map extension register specs in vendor/app space.
+    core_extension_specs_[0] = RegSpecs{reinterpret_cast<volatile uint8_t*>(regs.R_NET_SSID),
+                                        sizeof(regs.R_NET_SSID), U8};
+    core_extension_specs_[1] = RegSpecs{reinterpret_cast<volatile uint8_t*>(regs.R_NET_PASSWORD),
+                                        sizeof(regs.R_NET_PASSWORD), U8};
+    core_extension_specs_[2] = RegSpecs{reinterpret_cast<volatile uint8_t*>(regs.R_NET_SERVER_IP),
+                                        sizeof(regs.R_NET_SERVER_IP), U8};
+    core_extension_specs_[3] = RegSpecs{reinterpret_cast<volatile uint8_t*>(&regs.R_NET_SERVER_PORT),
+                                        sizeof(regs.R_NET_SERVER_PORT), U16};
+    core_extension_specs_[4] = RegSpecs{reinterpret_cast<volatile uint8_t*>(&regs.R_NET_CONFIG),
+                                        sizeof(regs.R_NET_CONFIG), U8};
+
+    // Populate Harp Core R_UID with serial low bytes and ESP32 base MAC.
+    regs.R_UID[0] = static_cast<uint8_t>(regs.R_SERIAL_NUMBER & 0xFFu);
+    regs.R_UID[1] = static_cast<uint8_t>((regs.R_SERIAL_NUMBER >> 8) & 0xFFu);
     uint8_t mac[6];
     esp_efuse_mac_get_default(mac);
-    memcpy((void*)(&regs.R_UUID[8]), mac, sizeof(mac));
+    memcpy((void*)(&regs.R_UID[8]), mac, sizeof(mac));
+
+    // Populate R_VERSION (protocol, firmware, hardware, core ID, hash=0).
+    regs.R_VERSION[0] = regs.R_CORE_VERSION_H;
+    regs.R_VERSION[1] = regs.R_CORE_VERSION_L;
+    regs.R_VERSION[2] = static_cast<uint8_t>(HARP_VERSION_PATCH);
+    regs.R_VERSION[3] = regs.R_FW_VERSION_H;
+    regs.R_VERSION[4] = regs.R_FW_VERSION_L;
+    regs.R_VERSION[5] = static_cast<uint8_t>(ESP32_CORE_VERSION_PATCH);
+    regs.R_VERSION[6] = regs.R_HW_VERSION_H;
+    regs.R_VERSION[7] = regs.R_HW_VERSION_L;
+    regs.R_VERSION[8] = 0;
+    regs.R_VERSION[9] = 'E';
+    regs.R_VERSION[10] = '3';
+    regs.R_VERSION[11] = '2';
+
     // Initialize next heartbeat.
     update_next_heartbeat_from_curr_harp_time_us(harp_time_us_64());
 }
@@ -89,6 +118,7 @@ void HarpCore::run()
     // On ESP32-S3 TinyUSB runs in its own background task (started by
     // tusb_init()); tud_task() must NOT be called from application code.
     update_state();
+    refresh_heartbeat_register();
     update_app_state(); // Does nothing unless a derived class implements it.
     refresh_net_config_status_bits();
     // Accept incoming Harp commands over both TCP and USB CDC.
@@ -122,6 +152,11 @@ void HarpCore::run()
     // Always clear any unhandled messages, so we don't lock up.
     if (new_msg_)
     {
+        msg_t msg = get_buffered_msg();
+        if (msg.header.type == READ)
+            send_harp_reply(READ_ERROR, msg.header.address);
+        else if (msg.header.type == WRITE)
+            send_harp_reply(WRITE_ERROR, msg.header.address);
 #ifdef DEBUG_HARP_MSG_IN
     printf("Ignoring out-of-range msg!\r\n");
 #endif
@@ -221,17 +256,27 @@ msg_t HarpCore::get_buffered_msg()
 
 void HarpCore::refresh_net_config_status_bits()
 {
-    uint8_t enable_bits = self->regs.R_NET_CONFIG & (NET_ENABLE_WIFI | NET_ENABLE_TCP);
+    uint8_t enable_bits = self->regs.R_NET_CONFIG & NET_CFG_ENABLE_MASK;
     uint8_t status_bits = 0;
 
     if (self->regs.R_NET_SSID[0] != '\0' && self->regs.R_NET_SERVER_IP[0] != '\0')
-        status_bits |= NET_STATUS_CFG_VALID;
+        status_bits |= NET_CFG_STATUS_CFG_VALID_MASK;
     if (NetworkManager::is_wifi_connected())
-        status_bits |= NET_STATUS_WIFI_UP | NET_STATUS_IP_OK;
+        status_bits |= NET_CFG_STATUS_WIFI_UP_MASK | NET_CFG_STATUS_IP_OK_MASK;
     if (NetworkManager::is_tcp_connected())
-        status_bits |= NET_STATUS_TCP_CONN;
+        status_bits |= NET_CFG_STATUS_TCP_CONN_MASK;
 
-    self->regs.R_NET_CONFIG = static_cast<uint8_t>(enable_bits | (status_bits & NET_STATUS_MASK));
+    self->regs.R_NET_CONFIG = static_cast<uint8_t>(enable_bits | (status_bits & NET_CFG_STATUS_MASK));
+}
+
+void HarpCore::refresh_heartbeat_register()
+{
+    uint16_t heartbeat = 0;
+    if (get_op_mode() == ACTIVE)
+        heartbeat |= 0x01u;
+    if (is_synced())
+        heartbeat |= 0x02u;
+    self->regs.R_HEARTBEAT = heartbeat;
 }
 
 void HarpCore::handle_buffered_core_message()
@@ -240,19 +285,44 @@ void HarpCore::handle_buffered_core_message()
     ESP_LOGD(kHarpCoreLogTag, "Dispatch type=%u addr=%u",
              (unsigned)msg.header.type,
              (unsigned)msg.header.address);
-    if (msg.header.address >= CORE_REG_COUNT)
+    RegFnPair* fn_pair = nullptr;
+    if (msg.header.address < CORE_REG_COUNT)
+        fn_pair = &self->reg_func_table_[msg.header.address];
+    else if (is_core_extension_address(msg.header.address))
+        fn_pair = &self->core_extension_reg_func_table_[core_extension_address_to_index(msg.header.address)];
+    else
         return;
+
+    const RegSpecs& specs = reg_address_to_specs(msg.header.address);
+    const uint8_t request_payload_type = static_cast<uint8_t>(msg.header.payload_type);
+    const uint8_t expected_payload_type = static_cast<uint8_t>(specs.payload_type);
+    if (request_payload_type != expected_payload_type)
+    {
+        if (msg.header.type == READ)
+            send_harp_reply(READ_ERROR, msg.header.address);
+        else if (msg.header.type == WRITE)
+            send_harp_reply(WRITE_ERROR, msg.header.address);
+        clear_msg();
+        return;
+    }
+    if ((msg.header.type == WRITE) && (msg.payload_length() != specs.num_bytes))
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        clear_msg();
+        return;
+    }
+
     switch (msg.header.type)
     {
         case READ:
-            if (reg_func_table_[msg.header.address].read_fn_ptr != nullptr)
-                reg_func_table_[msg.header.address].read_fn_ptr(msg.header.address);
+            if (fn_pair->read_fn_ptr != nullptr)
+                fn_pair->read_fn_ptr(msg.header.address);
             else
                 send_harp_reply(READ_ERROR, msg.header.address);
             break;
         case WRITE:
-            if (reg_func_table_[msg.header.address].write_fn_ptr != nullptr)
-                reg_func_table_[msg.header.address].write_fn_ptr(msg);
+            if (fn_pair->write_fn_ptr != nullptr)
+                fn_pair->write_fn_ptr(msg);
             else
                 send_harp_reply(WRITE_ERROR, msg.header.address);
             break;
@@ -290,7 +360,7 @@ void HarpCore::update_state(bool force, op_mode_t forced_next_state)
         update_next_heartbeat_from_curr_harp_time_us(harp_time_us);
         self->sync_handled_ = true;
     }
-    op_mode_t state = op_mode_t(self->regs_.r_operation_ctrl_bits.OP_MODE);
+    op_mode_t state = op_mode_t(self->regs.R_OPERATION_CTRL & OP_CTRL_OP_MODE_MASK);
     op_mode_t next_state = force ? forced_next_state : state;
     if (!force)
     {
@@ -301,9 +371,7 @@ void HarpCore::update_state(bool force, op_mode_t forced_next_state)
                     next_state = ACTIVE;
                 [[fallthrough]];
             case ACTIVE:
-                if (!host_connected && self->disconnect_handled_
-                    && (time_us - self->disconnect_start_time_us_)
-                       >= NO_PC_INTERVAL_US)
+                if (!host_connected)
                     next_state = STANDBY;
                 break;
             case RESERVED:
@@ -323,22 +391,29 @@ void HarpCore::update_state(bool force, op_mode_t forced_next_state)
     {
         self->heartbeat_interval_us_ = HEARTBEAT_STANDBY_INTERVAL_US;
     }
+    self->regs.R_OPERATION_CTRL = static_cast<uint8_t>(
+        (self->regs.R_OPERATION_CTRL & static_cast<uint8_t>(~OP_CTRL_OP_MODE_MASK)) |
+        (static_cast<uint8_t>(next_state) & OP_CTRL_OP_MODE_MASK));
     if (int32_t(time_us - self->next_heartbeat_time_us_) >= 0)
     {
         self->next_heartbeat_time_us_ += self->heartbeat_interval_us_;
-        if (self->regs_.r_operation_ctrl_bits.ALIVE_EN)
+        if ((next_state == ACTIVE) && !is_muted())
         {
-            if ((state == ACTIVE) & !is_muted())
+            self->refresh_heartbeat_register();
+            if ((self->regs.R_OPERATION_CTRL & OP_CTRL_HEARTBEAT_EN_MASK) != 0)
+                send_harp_reply(EVENT, HEARTBEAT);
+            else if ((self->regs.R_OPERATION_CTRL & OP_CTRL_ALIVE_EN_MASK) != 0)
                 send_harp_reply(EVENT, TIMESTAMP_SECOND);
         }
     }
-    self->regs_.r_operation_ctrl_bits.OP_MODE = static_cast<uint8_t>(next_state);
 }
 
 const RegSpecs& HarpCore::reg_address_to_specs(uint8_t address)
 {
     if (address < CORE_REG_COUNT)
         return self->regs_.address_to_specs[address];
+    if (is_core_extension_address(address))
+        return self->core_extension_specs_[core_extension_address_to_index(address)];
     return self->address_to_app_reg_specs(address);
 }
 
@@ -346,6 +421,9 @@ void HarpCore::send_harp_reply(msg_type_t reply_type, uint8_t reg_name,
                                const volatile uint8_t* data, uint8_t num_bytes,
                                reg_type_t payload_type, uint64_t harp_time_us)
 {
+    if ((reply_type != EVENT) && self->is_muted())
+        return;
+
     ESP_LOGD(kHarpCoreLogTag,
              "TX reply type=%u addr=%u bytes=%u cdc_connected=%u",
              (unsigned)reply_type,
@@ -482,6 +560,15 @@ void HarpCore::read_timestamp_second(uint8_t reg_name)
 
 void HarpCore::write_timestamp_second(msg_t& msg)
 {
+    const bool timestamp_unlocked =
+        (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_UNLOCK_MASK) != 0
+        && (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_LOCK_MASK) == 0;
+    if (!timestamp_unlocked)
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        return;
+    }
+
     uint32_t seconds;
     memcpy((void*)(&seconds), msg.payload, sizeof(seconds));
     uint64_t set_time_microseconds = uint64_t(seconds) * 1'000'000ULL;
@@ -499,34 +586,40 @@ void HarpCore::read_timestamp_microsecond(uint8_t reg_name)
     read_reg_generic(reg_name);
 }
 
-void HarpCore::write_timestamp_microsecond(msg_t& msg)
+void HarpCore::read_reset_dev(uint8_t reg_name)
 {
-    const uint32_t msg_us = ((uint32_t)(*((uint16_t*)msg.payload))) << 5;
-    // Keep the whole-second part and replace only the sub-second part.
-    uint64_t curr_total_s = harp_time_us_64() / 1'000'000ULL;
-    uint64_t new_harp_time_us = curr_total_s * 1'000'000ULL + msg_us;
-    set_harp_time_us_64(new_harp_time_us);
-    update_next_heartbeat_from_curr_harp_time_us(harp_time_us_64());
-    send_harp_reply(WRITE, msg.header.address);
+    // Report boot state and clear transient command bits on read.
+    uint8_t read_value = RESET_DEV_BOOT_DEF_MASK;
+    send_harp_reply(READ, reg_name, &read_value, sizeof(read_value), U8);
 }
 
 void HarpCore::write_operation_ctrl(msg_t& msg)
 {
     uint8_t& write_byte = *((uint8_t*)msg.payload);
-    const uint8_t& state = self->regs_.r_operation_ctrl_bits.OP_MODE;
-    const uint8_t& next_state = (*((OperationCtrlBits*)(&write_byte))).OP_MODE;
+    const uint8_t state = self->regs.R_OPERATION_CTRL & OP_CTRL_OP_MODE_MASK;
+    const uint8_t next_state = write_byte & OP_CTRL_OP_MODE_MASK;
+    if (next_state == SPEED)
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        return;
+    }
     if (state != next_state)
         self->force_state((op_mode_t)next_state);
-    self->regs.R_OPERATION_CTRL = write_byte & ~(0x01 << DUMP_OFFSET);
-    self->set_visual_indicators(bool((write_byte >> VISUAL_EN_OFFSET) & 0x01));
+    self->regs.R_OPERATION_CTRL = write_byte & static_cast<uint8_t>(~OP_CTRL_DUMP_MASK);
+    self->set_visual_indicators((write_byte & OP_CTRL_VISUAL_EN_MASK) != 0);
     if (self->is_muted())
         return;
-    bool DUMP = bool((write_byte >> DUMP_OFFSET) & 0x01);
+    bool DUMP = (write_byte & OP_CTRL_DUMP_MASK) != 0;
     send_harp_reply(WRITE, msg.header.address);
     if (DUMP)
     {
-        // Exclude transport-extension registers from standard core dump output.
-        for (uint8_t address = 0; address < TAG + 1; ++address)
+        for (uint8_t address = 0; address < CORE_REG_COUNT; ++address)
+        {
+            send_harp_reply(READ, address);
+        }
+        for (uint8_t address = CORE_EXTENSION_START_ADDRESS;
+             address < CORE_EXTENSION_START_ADDRESS + CORE_EXTENSION_REG_COUNT;
+             ++address)
         {
             send_harp_reply(READ, address);
         }
@@ -536,11 +629,33 @@ void HarpCore::write_operation_ctrl(msg_t& msg)
 
 void HarpCore::write_reset_dev(msg_t& msg)
 {
-    uint8_t& write_byte = *((uint8_t*)msg.payload);
-    const bool& rst_dev_bit = bool((write_byte >> RST_DEV_OFFSET) & 1u);
-    const bool& reset_dfu_bit = bool((write_byte >> RST_DFU_OFFSET) & 1u);
+    const uint8_t write_byte = *((uint8_t*)msg.payload);
+    const bool rst_dev_bit = (write_byte & RESET_DEV_RST_DEF_MASK) != 0;
+    const bool rst_ee_bit = (write_byte & RESET_DEV_RST_EE_MASK) != 0;
+    const bool save_bit = (write_byte & RESET_DEV_SAVE_MASK) != 0;
+    const bool name_to_default_bit = (write_byte & RESET_DEV_NAME_TO_DEFAULT_MASK) != 0;
+    const bool reset_dfu_bit = (write_byte & RESET_DEV_RST_DFU_MASK) != 0;
+    const bool boot_def_bit = (write_byte & RESET_DEV_BOOT_DEF_MASK) != 0;
+    const bool boot_ee_bit = (write_byte & RESET_DEV_BOOT_EE_MASK) != 0;
+
+    if (boot_def_bit || boot_ee_bit)
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        return;
+    }
+    if (rst_ee_bit || save_bit)
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        return;
+    }
+
     // ACK first so the host can confirm command acceptance before reset paths.
     send_harp_reply(WRITE, msg.header.address);
+
+    if (name_to_default_bit)
+    {
+        self->regs.R_DEVICE_NAME[0] = '\0';
+    }
 
     // On ESP32-S3 there is no USB bootloader (DFU) mode equivalent to
     // reset_usb_boot()-style flows on some MCUs. RST_DFU is mapped to
@@ -550,33 +665,68 @@ void HarpCore::write_reset_dev(msg_t& msg)
         esp_restart();
     if (rst_dev_bit)
     {
-        self->regs_.r_operation_ctrl_bits.OP_MODE = STANDBY;
+        self->regs.R_OPERATION_CTRL = static_cast<uint8_t>(
+            self->regs.R_OPERATION_CTRL & static_cast<uint8_t>(~OP_CTRL_OP_MODE_MASK));
         self->reset_app();
     }
 }
 
 void HarpCore::write_device_name(msg_t& msg)
 {
-    // TODO: persist to NVS.
-    write_reg_generic(msg);
+    // Optional register behavior when persistence is not implemented:
+    // acknowledge with unchanged/default value and no side effects.
+    send_harp_reply(WRITE, msg.header.address);
 }
 
 void HarpCore::write_serial_number(msg_t& msg)
 {
-    // TODO.
-    write_reg_generic(msg);
+    // Deprecated register write is unsupported in this implementation.
+    send_harp_reply(WRITE, msg.header.address);
 }
 
 void HarpCore::write_clock_config(msg_t& msg)
 {
-    // TODO.
-    write_reg_generic(msg);
+    const uint8_t requested = *static_cast<uint8_t*>(msg.payload);
+    const uint8_t current = self->regs.R_CLOCK_CONFIG;
+
+    // Bit layout for R_CLOCK_CONFIG
+    constexpr uint8_t MODE_MASK = CLOCK_CFG_CLK_REP_MASK | CLOCK_CFG_CLK_GEN_MASK;
+    constexpr uint8_t CAP_MASK = CLOCK_CFG_REP_ABLE_MASK | CLOCK_CFG_GEN_ABLE_MASK;
+    constexpr uint8_t UNLOCK_BIT = CLOCK_CFG_UNLOCK_MASK;
+    constexpr uint8_t LOCK_BIT = CLOCK_CFG_LOCK_MASK;
+
+    uint8_t next = current;
+
+    // 1) Update writable mode bits from host request.
+    next = static_cast<uint8_t>((next & ~MODE_MASK) | (requested & MODE_MASK));
+
+    // 2) Apply lock/unlock command bits.
+    // Preserve existing precedence: LOCK wins if both are set.
+    const bool wants_lock = (requested & LOCK_BIT) != 0;
+    const bool wants_unlock = (requested & UNLOCK_BIT) != 0;
+
+    if (wants_lock)
+    {
+        next = static_cast<uint8_t>((next | LOCK_BIT) & ~UNLOCK_BIT);
+    }
+    else if (wants_unlock)
+    {
+        next = static_cast<uint8_t>((next | UNLOCK_BIT) & ~LOCK_BIT);
+    }
+
+    // 3) Force capability bits to stay read-only.
+    next = static_cast<uint8_t>((next & ~CAP_MASK) | (current & CAP_MASK));
+
+    self->regs.R_CLOCK_CONFIG = next;
+    send_harp_reply(WRITE, msg.header.address);
 }
 
 void HarpCore::write_timestamp_offset(msg_t& msg)
 {
-    // TODO.
-    write_reg_generic(msg);
+    (void)msg;
+    // Deprecated register write is unsupported in this implementation.
+    self->regs.R_TIMESTAMP_OFFSET = 0;
+    send_harp_reply(WRITE, msg.header.address);
 }
 
 // Masked read: send reply with zeroed payload instead of actual password
@@ -626,14 +776,14 @@ void HarpCore::write_net_server_port(msg_t& msg) {
 void HarpCore::write_net_config(msg_t& msg) {
     uint8_t val = *((uint8_t*)msg.payload);
     // Preserve status bits (read-only, refreshed from live network state)
-    uint8_t status_bits = self->regs.R_NET_CONFIG & 0x3C; // bits [5:2]
-    uint8_t enable_bits = val & 0x03;                     // bits [1:0]
+    uint8_t status_bits = self->regs.R_NET_CONFIG & NET_CFG_STATUS_MASK; // bits [5:2]
+    uint8_t enable_bits = val & NET_CFG_ENABLE_MASK;                      // bits [1:0]
     self->regs.R_NET_CONFIG = enable_bits | status_bits;
 
-    if ((val & (1u << 6)) && (self->net_save_and_connect_fn_ != nullptr)) {
+    if ((val & NET_CFG_APPLY_MASK) && (self->net_save_and_connect_fn_ != nullptr)) {
         self->net_save_and_connect_fn_();
     }
-    if ((val & (1u << 7)) && (self->net_clear_fn_ != nullptr)) {
+    if ((val & NET_CFG_CLEAR_MASK) && (self->net_clear_fn_ != nullptr)) {
         self->net_clear_fn_();
         self->regs.R_NET_CONFIG = 0;
     }

@@ -5,23 +5,14 @@
 #include <core_reg_bits.h>
 #include <cstring>  // for strcpy
 
-// 18 standard core registers plus 5 transport-extension registers.
-static const uint8_t CORE_REG_COUNT = 23;
+// Latest protocol core register block: addresses 0-19.
+static const uint8_t CORE_REG_COUNT = 20;
 
-#define APP_REG_START_ADDRESS (32)
+// Core transport extensions are mapped into vendor/app space.
+static const uint8_t CORE_EXTENSION_START_ADDRESS = 32;
+static const uint8_t CORE_EXTENSION_REG_COUNT = 5;
 
-// R_OPERATION_CTRL bitfields.
-#define DUMP_OFFSET (3)
-#define MUTE_RPL_OFFSET (4)
-#define VISUAL_EN_OFFSET (5)
-#define OPLEDEN_OFFSET (6)
-#define ALIVE_EN_OFFSET (7)
-
-// RESET_DEV bitfields
-#define RST_DEV_OFFSET (0)
-#define RST_DFU_OFFSET (5)
-#define BOOT_DEF_OFFSET (6)
-#define BOOT_EE_OFFSET (7)
+#define APP_REG_START_ADDRESS (CORE_EXTENSION_START_ADDRESS + CORE_EXTENSION_REG_COUNT)
 
 /**
  * \brief enum for easier interpretation of the OP_MODE bitfield in the
@@ -45,25 +36,29 @@ enum RegName : uint8_t
     HW_VERSION_H = 1, // major hardware version
     HW_VERSION_L = 2, // minor hardware version
     ASSEMBLY_VERSION = 3,
-    HARP_VERSION_H = 4,
-    HARP_VERSION_L = 5,
+    CORE_VERSION_H = 4,
+    CORE_VERSION_L = 5,
     FW_VERSION_H = 6,
     FW_VERSION_L = 7,
     TIMESTAMP_SECOND = 8,
     TIMESTAMP_MICRO = 9,
     OPERATION_CTRL = 10,
-    RESET_DEF = 11,
+    RESET_DEV = 11,
     DEVICE_NAME = 12,
     SERIAL_NUMBER = 13,
     CLOCK_CONFIG = 14,
     TIMESTAMP_OFFSET = 15,
-    UUID = 16,
+    UID = 16,
     TAG = 17,
-    NET_SSID        = 18,
-    NET_PASSWORD    = 19,
-    NET_SERVER_IP = 20,  // IP(16)
-    NET_SERVER_PORT = 21,  // port(2)
-    NET_CONFIG      = 22,  // enable bits + status bits
+    HEARTBEAT = 18,
+    VERSION = 19,
+
+    // Core transport extension registers (vendor/app space).
+    NET_SSID = CORE_EXTENSION_START_ADDRESS,
+    NET_PASSWORD,
+    NET_SERVER_IP,  // IP(16)
+    NET_SERVER_PORT,  // port(2)
+    NET_CONFIG,  // enable bits + status bits
 };
 
 
@@ -75,20 +70,24 @@ struct RegValues
     const uint8_t R_HW_VERSION_H;
     const uint8_t R_HW_VERSION_L;
     const uint8_t R_ASSEMBLY_VERSION;
-    const uint8_t R_HARP_VERSION_H;
-    const uint8_t R_HARP_VERSION_L ;
+    const uint8_t R_CORE_VERSION_H;
+    const uint8_t R_CORE_VERSION_L ;
     const uint8_t R_FW_VERSION_H;
     const uint8_t R_FW_VERSION_L;
     volatile uint32_t R_TIMESTAMP_SECOND;
     volatile uint16_t R_TIMESTAMP_MICRO;
     volatile uint8_t R_OPERATION_CTRL;
-    volatile uint8_t R_RESET_DEF;
+    volatile uint8_t R_RESET_DEV;
     volatile char R_DEVICE_NAME[25];
     volatile uint16_t R_SERIAL_NUMBER;
     volatile uint8_t R_CLOCK_CONFIG;
     volatile uint8_t R_TIMESTAMP_OFFSET;
-    uint8_t R_UUID[16];
+    uint8_t R_UID[16];
     uint8_t R_TAG[8];
+    volatile uint16_t R_HEARTBEAT;
+    uint8_t R_VERSION[32];
+
+    // Core transport-extension registers (not part of standard core dump/map).
     volatile char     R_NET_SSID[32];
     volatile char     R_NET_PASSWORD[64];
     volatile uint8_t  R_NET_SERVER_IP[16]; 
@@ -129,35 +128,28 @@ struct Registers
     //  so we can't index into it directly by enum.
     // TODO: consider generating this table statically with a template.
     const RegSpecs address_to_specs[CORE_REG_COUNT] =
-    {{(uint8_t*)&regs_.R_WHO_AM_I,         sizeof(regs_.R_WHO_AM_I),          U16},
+    {{(uint8_t*)&regs_.R_WHO_AM_I,         sizeof(regs_.R_WHO_AM_I),         U16},
      {(uint8_t*)&regs_.R_HW_VERSION_H,     sizeof(regs_.R_HW_VERSION_H),      U8},
      {(uint8_t*)&regs_.R_HW_VERSION_L,     sizeof(regs_.R_HW_VERSION_L),      U8},
      {(uint8_t*)&regs_.R_ASSEMBLY_VERSION, sizeof(regs_.R_ASSEMBLY_VERSION),  U8},
-     {(uint8_t*)&regs_.R_HARP_VERSION_H,   sizeof(regs_.R_HARP_VERSION_H),    U8},
-        {(uint8_t*)&regs_.R_HARP_VERSION_L,   sizeof(regs_.R_HARP_VERSION_L),    U8},
+     {(uint8_t*)&regs_.R_CORE_VERSION_H,   sizeof(regs_.R_CORE_VERSION_H),    U8},
+     {(uint8_t*)&regs_.R_CORE_VERSION_L,   sizeof(regs_.R_CORE_VERSION_L),    U8},
      {(uint8_t*)&regs_.R_FW_VERSION_H,     sizeof(regs_.R_FW_VERSION_H),      U8},
      {(uint8_t*)&regs_.R_FW_VERSION_L,     sizeof(regs_.R_FW_VERSION_L),      U8},
      {(uint8_t*)&regs_.R_TIMESTAMP_SECOND, sizeof(regs_.R_TIMESTAMP_SECOND),  U32},
      {(uint8_t*)&regs_.R_TIMESTAMP_MICRO,  sizeof(regs_.R_TIMESTAMP_MICRO),   U16},
      {(uint8_t*)&regs_.R_OPERATION_CTRL,   sizeof(regs_.R_OPERATION_CTRL),    U8},
-     {(uint8_t*)&regs_.R_RESET_DEF,        sizeof(regs_.R_RESET_DEF),         U8},
+     {(uint8_t*)&regs_.R_RESET_DEV,        sizeof(regs_.R_RESET_DEV),         U8},
      {(uint8_t*)&regs_.R_DEVICE_NAME,      sizeof(regs_.R_DEVICE_NAME),       U8},
      {(uint8_t*)&regs_.R_SERIAL_NUMBER,    sizeof(regs_.R_SERIAL_NUMBER),     U16},
      {(uint8_t*)&regs_.R_CLOCK_CONFIG,     sizeof(regs_.R_CLOCK_CONFIG),      U8},
      {(uint8_t*)&regs_.R_TIMESTAMP_OFFSET, sizeof(regs_.R_TIMESTAMP_OFFSET),  U8},
-     {(uint8_t*)&regs_.R_UUID,             sizeof(regs_.R_UUID),  U8},
-     {(uint8_t*)&regs_.R_TAG,              sizeof(regs_.R_TAG),  U8},
-     {(uint8_t*)regs_.R_NET_SSID,          sizeof(regs_.R_NET_SSID),          U8},
-     {(uint8_t*)regs_.R_NET_PASSWORD,      sizeof(regs_.R_NET_PASSWORD),      U8},
-     {(uint8_t*)regs_.R_NET_SERVER_IP,     sizeof(regs_.R_NET_SERVER_IP),     U8},
-     {(uint8_t*)&regs_.R_NET_SERVER_PORT,  sizeof(regs_.R_NET_SERVER_PORT),   U16},
-     {(uint8_t*)&regs_.R_NET_CONFIG,       sizeof(regs_.R_NET_CONFIG),        U8},
+     {(uint8_t*)&regs_.R_UID,              sizeof(regs_.R_UID),               U8},
+     {(uint8_t*)&regs_.R_TAG,              sizeof(regs_.R_TAG),               U8},
+     {(uint8_t*)&regs_.R_HEARTBEAT,        sizeof(regs_.R_HEARTBEAT),        U16},
+     {(uint8_t*)&regs_.R_VERSION,          sizeof(regs_.R_VERSION),           U8},
     };
 
-    // Syntactic Sugar. Make bitfields for certain registers easier to access.
-    OperationCtrlBits& r_operation_ctrl_bits = *((OperationCtrlBits*)(&regs_.R_OPERATION_CTRL));
-    ResetDefBits& r_reset_def_bits = *((ResetDefBits*)(&regs_.R_RESET_DEF));
-    ClockConfigBits& r_clock_config_bits = *((ClockConfigBits*)(&regs_.R_CLOCK_CONFIG));
 };
 
 #endif //REGISTERS_H
