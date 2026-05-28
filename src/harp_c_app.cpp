@@ -3,7 +3,6 @@
 HarpCApp& HarpCApp::init(uint16_t who_am_i,
                          uint8_t hw_version_major, uint8_t hw_version_minor,
                          uint8_t assembly_version,
-                         uint8_t harp_version_major, uint8_t harp_version_minor,
                          uint8_t fw_version_major, uint8_t fw_version_minor,
                          uint16_t serial_number, const char name[],
                          const uint8_t tag[],
@@ -13,17 +12,38 @@ HarpCApp& HarpCApp::init(uint16_t who_am_i,
 {
     static HarpCApp app(who_am_i, hw_version_major, hw_version_minor,
                         assembly_version,
-                        harp_version_major, harp_version_minor,
                         fw_version_major, fw_version_minor, serial_number,
                         name, tag, app_reg_values, app_reg_specs,
                         app_reg_fns, app_reg_count, update_fn, reset_fn);
     return app;
 }
 
+HarpCApp& HarpCApp::init(uint16_t who_am_i,
+                         uint8_t hw_version_major, uint8_t hw_version_minor,
+                         uint8_t assembly_version,
+                         uint8_t harp_version_major, uint8_t harp_version_minor,
+                         uint8_t fw_version_major, uint8_t fw_version_minor,
+                         uint16_t serial_number, const char name[],
+                         const uint8_t tag[],
+                         void* app_reg_values, RegSpecs* app_reg_specs,
+                         RegFnPair* app_reg_fns, size_t app_reg_count,
+                         void (* update_fn)(void), void (* reset_fn)(void))
+{
+    (void)harp_version_major;
+    (void)harp_version_minor;
+    return init(who_am_i,
+                hw_version_major, hw_version_minor,
+                assembly_version,
+                fw_version_major, fw_version_minor,
+                serial_number, name, tag,
+                app_reg_values, app_reg_specs,
+                app_reg_fns, app_reg_count,
+                update_fn, reset_fn);
+}
+
 HarpCApp::HarpCApp(uint16_t who_am_i,
                    uint8_t hw_version_major, uint8_t hw_version_minor,
                    uint8_t assembly_version,
-                   uint8_t harp_version_major, uint8_t harp_version_minor,
                    uint8_t fw_version_major, uint8_t fw_version_minor,
                    uint16_t serial_number, const char name[],
                    const uint8_t tag[],
@@ -37,13 +57,36 @@ HarpCApp::HarpCApp(uint16_t who_am_i,
  update_fn_{update_fn},
  reset_fn_{reset_fn},
  HarpCore(who_am_i, hw_version_major, hw_version_minor,
-          assembly_version, harp_version_major, harp_version_minor,
+          assembly_version,
           fw_version_major, fw_version_minor, serial_number, name, tag)
 {
     // Call base class constructor.
     // Create a ptr to the first (and only) derived class instance created.
     if (self == nullptr)
         self = this;
+}
+
+HarpCApp::HarpCApp(uint16_t who_am_i,
+                   uint8_t hw_version_major, uint8_t hw_version_minor,
+                   uint8_t assembly_version,
+                   uint8_t harp_version_major, uint8_t harp_version_minor,
+                   uint8_t fw_version_major, uint8_t fw_version_minor,
+                   uint16_t serial_number, const char name[],
+                   const uint8_t tag[],
+                   void* app_reg_values, RegSpecs* app_reg_specs,
+                   RegFnPair* app_reg_fns, size_t app_reg_count,
+                   void (*update_fn)(void), void (* reset_fn)(void))
+    : HarpCApp(who_am_i,
+               hw_version_major, hw_version_minor,
+               assembly_version,
+               fw_version_major, fw_version_minor,
+               serial_number, name, tag,
+               app_reg_values, app_reg_specs,
+               app_reg_fns, app_reg_count,
+               update_fn, reset_fn)
+{
+    (void)harp_version_major;
+    (void)harp_version_minor;
 }
 
 HarpCApp::~HarpCApp(){self = nullptr;}
@@ -56,6 +99,26 @@ void HarpCApp::handle_buffered_app_message()
         msg.header.address >= (APP_REG_START_ADDRESS + reg_count_))
         return;
     uint8_t app_reg_address = msg.header.address - APP_REG_START_ADDRESS;
+
+    const RegSpecs& specs = reg_specs_[app_reg_address];
+    const uint8_t request_payload_type = static_cast<uint8_t>(msg.header.payload_type);
+    const uint8_t expected_payload_type = static_cast<uint8_t>(specs.payload_type);
+    if (request_payload_type != expected_payload_type)
+    {
+        if (msg.header.type == READ)
+            send_harp_reply(READ_ERROR, msg.header.address);
+        else if (msg.header.type == WRITE)
+            send_harp_reply(WRITE_ERROR, msg.header.address);
+        clear_msg();
+        return;
+    }
+    if ((msg.header.type == WRITE) && (msg.payload_length() != specs.num_bytes))
+    {
+        send_harp_reply(WRITE_ERROR, msg.header.address);
+        clear_msg();
+        return;
+    }
+
     switch (msg.header.type)
     {
         // Note: handler functions take the full address, but they live in

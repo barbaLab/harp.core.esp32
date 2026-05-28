@@ -19,18 +19,25 @@ MSG_EVENT = 0x03
 HAS_TIMESTAMP = 0x10
 
 TYPE_U8 = 0x01
+TYPE_U16 = 0x02
+TYPE_U32 = 0x04
 PORT_DEFAULT = 255
 
 
 # Core register addresses
 REG_WHO_AM_I = 0
 REG_TIMESTAMP_SECOND = 8
+REG_TIMESTAMP_MICRO = 9
 REG_OPERATION_CTRL = 10
-REG_NET_SSID = 18
-REG_NET_PASSWORD = 19
-REG_NET_SERVER_IP = 20
-REG_NET_SERVER_PORT = 21
-REG_NET_CONFIG = 22
+REG_HEARTBEAT = 18
+REG_VERSION = 19
+
+# Core extension register addresses (vendor/app space)
+REG_NET_SSID = 32
+REG_NET_PASSWORD = 33
+REG_NET_SERVER_IP = 34
+REG_NET_SERVER_PORT = 35
+REG_NET_CONFIG = 36
 
 NET_SSID_LEN = 32
 NET_PASSWORD_LEN = 64
@@ -42,6 +49,7 @@ NET_CFG_APPLY = 1 << 6
 
 OP_MODE_STANDBY = 0
 OP_MODE_ACTIVE = 1
+HEARTBEAT_EN_BIT = 2
 ALIVE_EN_BIT = 7
 
 
@@ -63,7 +71,20 @@ def _pack_c_string_fixed(value: str, length: int, field_name: str) -> list[int]:
 
 def build_read(address: int) -> bytes:
     raw_len = 4
-    payload_type = TYPE_U8
+    read_payload_types = {
+        REG_WHO_AM_I: TYPE_U16,
+        REG_TIMESTAMP_SECOND: TYPE_U32,
+        REG_TIMESTAMP_MICRO: TYPE_U16,
+        REG_OPERATION_CTRL: TYPE_U8,
+        REG_HEARTBEAT: TYPE_U16,
+        REG_VERSION: TYPE_U8,
+        REG_NET_SSID: TYPE_U8,
+        REG_NET_PASSWORD: TYPE_U8,
+        REG_NET_SERVER_IP: TYPE_U8,
+        REG_NET_SERVER_PORT: TYPE_U16,
+        REG_NET_CONFIG: TYPE_U8,
+    }
+    payload_type = read_payload_types.get(address, TYPE_U8)
     header = struct.pack("BBBBB", MSG_READ, raw_len, address, PORT_DEFAULT, payload_type)
     return header + bytes([_checksum(header)])
 
@@ -72,6 +93,24 @@ def build_write_u8(address: int, value: int) -> bytes:
     payload = struct.pack("B", value)
     raw_len = 4 + len(payload)
     payload_type = TYPE_U8
+    header = struct.pack("BBBBB", MSG_WRITE, raw_len, address, PORT_DEFAULT, payload_type)
+    body = header + payload
+    return body + bytes([_checksum(body)])
+
+
+def build_write_u16(address: int, value: int) -> bytes:
+    payload = struct.pack("<H", value)
+    raw_len = 4 + len(payload)
+    payload_type = TYPE_U16
+    header = struct.pack("BBBBB", MSG_WRITE, raw_len, address, PORT_DEFAULT, payload_type)
+    body = header + payload
+    return body + bytes([_checksum(body)])
+
+
+def build_write_u32(address: int, value: int) -> bytes:
+    payload = struct.pack("<I", value)
+    raw_len = 4 + len(payload)
+    payload_type = TYPE_U32
     header = struct.pack("BBBBB", MSG_WRITE, raw_len, address, PORT_DEFAULT, payload_type)
     body = header + payload
     return body + bytes([_checksum(body)])
@@ -106,6 +145,9 @@ class HarpReply:
 
     def payload_u16(self) -> int:
         return struct.unpack_from("<H", self.payload)[0]
+
+    def payload_u32(self) -> int:
+        return struct.unpack_from("<I", self.payload)[0]
 
 
 def recv_reply(sock: socket.socket, timeout: float = 2.0) -> HarpReply:
@@ -167,6 +209,14 @@ class HarpTCPConnection:
 
     def write_u8(self, address: int, value: int, timeout: float = 2.0) -> HarpReply:
         self.sock.sendall(build_write_u8(address, value))
+        return recv_reply(self.sock, timeout)
+
+    def write_u16(self, address: int, value: int, timeout: float = 2.0) -> HarpReply:
+        self.sock.sendall(build_write_u16(address, value))
+        return recv_reply(self.sock, timeout)
+
+    def write_u32(self, address: int, value: int, timeout: float = 2.0) -> HarpReply:
+        self.sock.sendall(build_write_u32(address, value))
         return recv_reply(self.sock, timeout)
 
     def drain(self, window: float = 0.2):

@@ -3,12 +3,12 @@
 
 import tcp_test_config as cfg
 from harp_tcp_test_utils import (
-    ALIVE_EN_BIT,
+    HEARTBEAT_EN_BIT,
     MSG_EVENT,
     OP_MODE_ACTIVE,
     OP_MODE_STANDBY,
+    REG_HEARTBEAT,
     REG_OPERATION_CTRL,
-    REG_TIMESTAMP_SECOND,
     accept_harp_connection,
     configure_network_over_usb,
     recv_reply,
@@ -37,7 +37,7 @@ def run_test() -> list[float]:
 
     intervals = []
     with connection as client:
-        ctrl = OP_MODE_ACTIVE | (1 << ALIVE_EN_BIT)
+        ctrl = OP_MODE_ACTIVE | (1 << HEARTBEAT_EN_BIT)
         reply = client.write_u8(REG_OPERATION_CTRL, ctrl)
         if reply.is_error:
             raise AssertionError("Failed to set OPERATION_CTRL for heartbeat")
@@ -49,10 +49,13 @@ def run_test() -> list[float]:
             msg = recv_reply(client.sock, timeout=cfg.HEARTBEAT_TIMEOUT_S)
             if msg.msg_type != MSG_EVENT:
                 raise AssertionError(f"Expected EVENT, got 0x{msg.msg_type:02X}")
-            if msg.address != REG_TIMESTAMP_SECOND:
-                raise AssertionError(f"Expected heartbeat at reg {REG_TIMESTAMP_SECOND}, got {msg.address}")
+            if msg.address != REG_HEARTBEAT:
+                raise AssertionError(f"Expected heartbeat at reg {REG_HEARTBEAT}, got {msg.address}")
             if msg.ts_us is None:
                 raise AssertionError("Expected timestamp in heartbeat")
+            heartbeat = msg.payload_u16()
+            if (heartbeat & 0x01) == 0:
+                raise AssertionError(f"Expected IS_ACTIVE bit in heartbeat payload, got 0x{heartbeat:04X}")
             timestamps_us.append(msg.ts_us)
 
         intervals = [
