@@ -147,6 +147,8 @@ The firmware uses ESP-IDF logging. `examples/minimal_platformio/src/main.cpp` em
 ### Optional Synchronization
 
 `HarpSynchronizer` can be enabled from `examples/minimal_platformio/src/main.cpp` by turning on the UART sync path and setting the correct RX pin and UART port for your hardware.
+
+See `docs/synchronization-implementation-notes.md` for implementation details, spec alignment, failure modes, and mitigation notes for the current UART sync receiver.
 ## Tests
 
 The scripts in `test/` exercise the device over the Harp Python package.

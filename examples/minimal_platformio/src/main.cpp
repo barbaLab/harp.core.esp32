@@ -26,6 +26,8 @@ constexpr uint8_t kTag[] = "ESP32";
 constexpr bool kEnableUartSync = false;
 constexpr uart_port_t kSyncUartPort = UART_NUM_1;
 constexpr uint8_t kSyncUartRxPin = 4;
+// Optional: set a concrete TX pin to enable timer-started sync packet generation.
+constexpr int kSyncUartTxPin = UART_PIN_NO_CHANGE;
 
 // Keep this low to preserve USB/Harp responsiveness.
 constexpr TickType_t kCoreLoopDelayTicks = 1;
@@ -66,10 +68,10 @@ extern "C" void app_main(void)
 
     if (kEnableUartSync)
     {
-        auto& sync = HarpSynchronizer::init(kSyncUartPort, kSyncUartRxPin);
+        auto& sync = HarpSynchronizer::init(kSyncUartPort, kSyncUartRxPin, kSyncUartTxPin);
         HarpCore::set_synchronizer(&sync);
-        ESP_LOGI(kMainLogTag, "UART synchronizer enabled on uart=%d rx_pin=%u",
-                 static_cast<int>(kSyncUartPort), static_cast<unsigned>(kSyncUartRxPin));
+        ESP_LOGI(kMainLogTag, "UART synchronizer enabled on uart=%d rx_pin=%u tx_pin=%d",
+             static_cast<int>(kSyncUartPort), static_cast<unsigned>(kSyncUartRxPin), kSyncUartTxPin);
     }
 
     const BaseType_t core_task_ok = xTaskCreatePinnedToCore(

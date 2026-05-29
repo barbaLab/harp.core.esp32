@@ -178,7 +178,28 @@ public:
      self->offset_us_64_ = (uint64_t)esp_timer_get_time() - harp_time_us;}
 
     static void set_synchronizer(HarpSynchronizer* sync)
-    {self->sync_ = sync;}
+    {
+        self->sync_ = sync;
+        if (sync == nullptr)
+        {
+            self->regs.R_CLOCK_CONFIG = static_cast<uint8_t>(
+                self->regs.R_CLOCK_CONFIG &
+                static_cast<uint8_t>(~(CLOCK_CFG_REP_ABLE_MASK | CLOCK_CFG_GEN_ABLE_MASK |
+                                       CLOCK_CFG_CLK_REP_MASK | CLOCK_CFG_CLK_GEN_MASK)));
+            return;
+        }
+
+        const uint8_t capability_bits = sync->supports_clock_output() ?
+            static_cast<uint8_t>(CLOCK_CFG_REP_ABLE_MASK | CLOCK_CFG_GEN_ABLE_MASK) : 0;
+        self->regs.R_CLOCK_CONFIG = static_cast<uint8_t>(
+            (self->regs.R_CLOCK_CONFIG &
+             static_cast<uint8_t>(~(CLOCK_CFG_REP_ABLE_MASK | CLOCK_CFG_GEN_ABLE_MASK))) |
+            capability_bits);
+
+        const bool clk_rep = (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_CLK_REP_MASK) != 0;
+        const bool clk_gen = (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_CLK_GEN_MASK) != 0;
+        sync->set_clock_modes(clk_rep, clk_gen);
+    }
 
     static void set_visual_indicators_fn(void (*func)(bool))
     { self->set_visual_indicators_fn_ = func; }

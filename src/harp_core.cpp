@@ -581,9 +581,12 @@ void HarpCore::read_timestamp_second(uint8_t reg_name)
 
 void HarpCore::write_timestamp_second(msg_t& msg)
 {
+    const bool repeater_enabled =
+        (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_CLK_REP_MASK) != 0;
     const bool timestamp_unlocked =
-        (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_UNLOCK_MASK) != 0
-        && (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_LOCK_MASK) == 0;
+        repeater_enabled ||
+        ((self->regs.R_CLOCK_CONFIG & CLOCK_CFG_UNLOCK_MASK) != 0
+         && (self->regs.R_CLOCK_CONFIG & CLOCK_CFG_LOCK_MASK) == 0);
     if (!timestamp_unlocked)
     {
         send_harp_reply(WRITE_ERROR, msg.header.address);
@@ -718,8 +721,12 @@ void HarpCore::write_clock_config(msg_t& msg)
 
     uint8_t next = current;
 
-    // 1) Update writable mode bits from host request.
-    next = static_cast<uint8_t>((next & ~MODE_MASK) | (requested & MODE_MASK));
+    const bool supports_sync_output =
+        (self->sync_ != nullptr) && self->sync_->supports_clock_output();
+    const uint8_t writable_mode_mask = supports_sync_output ? MODE_MASK : 0;
+
+    // 1) Update writable mode bits from host request when supported.
+    next = static_cast<uint8_t>((next & ~MODE_MASK) | (requested & writable_mode_mask));
 
     // 2) Apply lock/unlock command bits.
     // Preserve existing precedence: LOCK wins if both are set.
@@ -735,10 +742,23 @@ void HarpCore::write_clock_config(msg_t& msg)
         next = static_cast<uint8_t>((next | UNLOCK_BIT) & ~LOCK_BIT);
     }
 
-    // 3) Force capability bits to stay read-only.
-    next = static_cast<uint8_t>((next & ~CAP_MASK) | (current & CAP_MASK));
+    // 3) Force capability bits to stay read-only and reflect runtime support.
+    const uint8_t capability_bits = supports_sync_output ? CAP_MASK : 0;
+    next = static_cast<uint8_t>((next & ~CAP_MASK) | capability_bits);
+
+    // 4) Spec behavior: enabling CLK_REP also enables writing timestamp.
+    if ((next & CLOCK_CFG_CLK_REP_MASK) != 0)
+        next = static_cast<uint8_t>((next | UNLOCK_BIT) & ~LOCK_BIT);
 
     self->regs.R_CLOCK_CONFIG = next;
+
+    if (self->sync_ != nullptr)
+    {
+        const bool clk_rep = (next & CLOCK_CFG_CLK_REP_MASK) != 0;
+        const bool clk_gen = (next & CLOCK_CFG_CLK_GEN_MASK) != 0;
+        self->sync_->set_clock_modes(clk_rep, clk_gen);
+    }
+
     send_harp_reply(WRITE, msg.header.address);
 }
 
